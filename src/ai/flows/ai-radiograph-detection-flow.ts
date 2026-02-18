@@ -79,46 +79,42 @@ const aiRadiographDetectionFlow = ai.defineFlow(
       image: base64Image,
     };
 
-    try {
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Token ${authorizationToken}`,
-        },
-        body: JSON.stringify(requestBody),
-      });
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Token ${authorizationToken}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `External API error: ${response.status} ${response.statusText} - ${errorText}`
-        );
-      }
-
-      const apiResponse = await response.json();
-      console.log('External API Response:', JSON.stringify(apiResponse, null, 2));
-
-      if (!apiResponse || typeof apiResponse.processed_image !== 'string' || apiResponse.processed_image.trim() === '') {
-        throw new Error(
-          `External API response did not contain the expected "processed_image" field. Full response: ${JSON.stringify(apiResponse)}`
-        );
-      }
-      
-      const detections = (apiResponse.detections && Array.isArray(apiResponse.detections)) ? apiResponse.detections : [];
-
-      let processedRadiographDataUri = apiResponse.processed_image;
-      if (!processedRadiographDataUri.startsWith('data:image/')) {
-          processedRadiographDataUri = `data:image/jpeg;base64,${processedRadiographDataUri}`;
-      }
-
-      return {
-        processedRadiographDataUri: processedRadiographDataUri,
-        detections: detections,
-      };
-    } catch (error) {
-      console.error('Error calling external radiograph detection API:', error);
-      throw new Error(`Failed to process radiograph: ${(error as Error).message}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('External API Error:', errorText); // For server logs
+      // Throw the raw error from the API to be displayed on the frontend
+      throw new Error(errorText);
     }
+
+    const apiResponse = await response.json();
+    console.log('External API Response:', JSON.stringify(apiResponse, null, 2));
+
+    if (!apiResponse || typeof apiResponse.processed_image !== 'string' || apiResponse.processed_image.trim() === '') {
+      // Throw an error including the full API response if the expected field is missing
+      throw new Error(
+        `API response did not contain "processed_image". Full response: ${JSON.stringify(apiResponse)}`
+      );
+    }
+    
+    const detections = (apiResponse.detections && Array.isArray(apiResponse.detections)) ? apiResponse.detections : [];
+
+    let processedRadiographDataUri = apiResponse.processed_image;
+    if (!processedRadiographDataUri.startsWith('data:image/')) {
+        processedRadiographDataUri = `data:image/jpeg;base64,${processedRadiographDataUri}`;
+    }
+
+    return {
+      processedRadiographDataUri: processedRadiographDataUri,
+      detections: detections,
+    };
   }
 );

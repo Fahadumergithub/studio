@@ -34,7 +34,8 @@ export async function runAnalysis(input: AiRadiographDetectionInput): Promise<An
   } catch (e) {
     const error = e as Error;
     console.error('Error during radiograph analysis:', error);
-    return { success: false, error: `Failed to analyze the radiograph. ${error.message}` };
+    // Pass the raw error message to the frontend
+    return { success: false, error: error.message };
   }
 }
 
