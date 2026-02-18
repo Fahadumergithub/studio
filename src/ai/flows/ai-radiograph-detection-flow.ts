@@ -95,7 +95,10 @@ const aiRadiographDetectionFlow = ai.defineFlow(
       const apiResponse = await response.json();
 
       if (!apiResponse || typeof apiResponse.processed_image !== 'string') {
-        throw new Error('External API response did not contain a valid processed image data URI in the "processed_image" field.');
+        const availableKeys = Object.keys(apiResponse || {}).join(', ');
+        throw new Error(
+          `External API response did not contain the expected "processed_image" field. Available keys: [${availableKeys}]`
+        );
       }
       
       const detections = (apiResponse.detections && Array.isArray(apiResponse.detections)) ? apiResponse.detections : [];
