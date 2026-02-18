@@ -94,17 +94,20 @@ const aiRadiographDetectionFlow = ai.defineFlow(
 
       const apiResponse = await response.json();
 
-      if (!apiResponse || typeof apiResponse.processed_image !== 'string') {
+      if (!apiResponse || typeof apiResponse.processed_image !== 'string' || apiResponse.processed_image.trim() === '') {
         const availableKeys = Object.keys(apiResponse || {}).join(', ');
         throw new Error(
-          `External API response did not contain the expected "processed_image" field. Available keys: [${availableKeys}]`
+          `External API response did not contain the expected "processed_image" field with a value. Available keys: [${availableKeys}]`
         );
       }
       
       const detections = (apiResponse.detections && Array.isArray(apiResponse.detections)) ? apiResponse.detections : [];
 
+      // The API returns a base64 string, but it needs to be a data URI for the image component.
+      const processedRadiographDataUri = `data:image/jpeg;base64,${apiResponse.processed_image}`;
+
       return {
-        processedRadiographDataUri: apiResponse.processed_image,
+        processedRadiographDataUri: processedRadiographDataUri,
         detections: detections,
       };
     } catch (error) {
