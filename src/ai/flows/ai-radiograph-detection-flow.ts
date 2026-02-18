@@ -100,9 +100,8 @@ const aiRadiographDetectionFlow = ai.defineFlow(
       console.log('External API Response:', JSON.stringify(apiResponse, null, 2));
 
       if (!apiResponse || typeof apiResponse.processed_image !== 'string' || apiResponse.processed_image.trim() === '') {
-        const availableKeys = Object.keys(apiResponse || {}).join(', ');
         throw new Error(
-          `External API response did not contain the expected "processed_image" field with a value. Available keys: [${availableKeys}]`
+          `External API response did not contain the expected "processed_image" field. Full response: ${JSON.stringify(apiResponse)}`
         );
       }
       
