@@ -71,7 +71,7 @@ const aiRadiographDetectionFlow = ai.defineFlow(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authorizationToken}`, // Assuming Bearer token
+          'Authorization': `Token ${authorizationToken}`, // Assuming Token-based auth
         },
         body: JSON.stringify(requestBody),
       });
