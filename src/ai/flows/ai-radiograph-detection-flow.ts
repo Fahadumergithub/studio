@@ -64,18 +64,15 @@ const aiRadiographDetectionFlow = ai.defineFlow(
       throw new Error('DENTAL_API_AUTH_TOKEN environment variable is not set.');
     }
     
-    // The API likely expects a raw base64 string, not a full data URI.
-    const imageParts = input.radiographDataUri.split(',');
-    const base64Image = imageParts.length > 1 ? imageParts[1] : imageParts[0];
-
-    if (!base64Image) {
+    // The external API expects the full data URI for the image.
+    if (!input.radiographDataUri || !input.radiographDataUri.startsWith('data:image/')) {
         throw new Error('Invalid radiograph data URI format.');
     }
 
     const requestBody = {
       class_list: classList,
       draw_boxes: true,
-      image: base64Image,
+      image: input.radiographDataUri,
     };
 
     try {
