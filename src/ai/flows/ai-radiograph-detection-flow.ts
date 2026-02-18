@@ -103,8 +103,12 @@ const aiRadiographDetectionFlow = ai.defineFlow(
       
       const detections = (apiResponse.detections && Array.isArray(apiResponse.detections)) ? apiResponse.detections : [];
 
-      // The API returns a base64 string, but it needs to be a data URI for the image component.
-      const processedRadiographDataUri = `data:image/jpeg;base64,${apiResponse.processed_image}`;
+      // The API might return a raw base64 string or a full data URI.
+      // Let's handle both cases to be safe.
+      let processedRadiographDataUri = apiResponse.processed_image;
+      if (!processedRadiographDataUri.startsWith('data:image/')) {
+          processedRadiographDataUri = `data:image/jpeg;base64,${processedRadiographDataUri}`;
+      }
 
       return {
         processedRadiographDataUri: processedRadiographDataUri,
