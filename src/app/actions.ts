@@ -1,6 +1,7 @@
 'use server';
 
 import { aiRadiographDetection, type AiRadiographDetectionInput, type AiRadiographDetectionOutput } from '@/ai/flows/ai-radiograph-detection-flow';
+import { aiAnalysisSummary, type AiAnalysisSummaryInput, type AiAnalysisSummaryOutput } from '@/ai/flows/ai-analysis-summary-flow';
 import { z } from 'zod';
 
 const runAnalysisSchema = z.object({
@@ -33,6 +34,41 @@ export async function runAnalysis(input: AiRadiographDetectionInput): Promise<An
   } catch (e) {
     const error = e as Error;
     console.error('Error during radiograph analysis:', error);
-    return { success: false, error: 'Failed to analyze the radiograph. Please try again later.' };
+    return { success: false, error: `Failed to analyze the radiograph. ${error.message}` };
+  }
+}
+
+const DetectionItemSchema = z.object({
+  box: z.array(z.number()).length(4),
+  class_id: z.number(),
+  class_name: z.string(),
+  score: z.number(),
+});
+
+const getSummarySchema = z.object({
+  detections: z.array(DetectionItemSchema),
+});
+
+
+type SummaryResult = {
+  success: true;
+  data: AiAnalysisSummaryOutput;
+} | {
+  success: false;
+  error: string;
+};
+
+export async function getAnalysisSummary(input: AiAnalysisSummaryInput): Promise<SummaryResult> {
+  const validation = getSummarySchema.safeParse(input);
+  if (!validation.success) {
+    return { success: false, error: 'Invalid input for summary generation.' };
+  }
+  try {
+    const result = await aiAnalysisSummary(validation.data);
+    return { success: true, data: result };
+  } catch (e) {
+    const error = e as Error;
+    console.error('Error during summary generation:', error);
+    return { success: false, error: 'Failed to generate summary.' };
   }
 }

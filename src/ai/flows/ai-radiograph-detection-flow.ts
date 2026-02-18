@@ -21,18 +21,22 @@ const AiRadiographDetectionInputSchema = z.object({
 });
 export type AiRadiographDetectionInput = z.infer<typeof AiRadiographDetectionInputSchema>;
 
+// Schema for a single detected item, to be included in the output.
+const DetectionItemSchema = z.object({
+  box: z.array(z.number()).length(4).describe('Bounding box coordinates [x1, y1, x2, y2].'),
+  class_id: z.number().describe('ID of the detected class.'),
+  class_name: z.string().describe('Name of the detected class (e.g., "tooth_1", "decay_area").'),
+  score: z.number().describe('Confidence score of the detection.'),
+});
+
 // Output Schema for the radiograph detection flow
-// Assuming the external API returns the processed image as a data URI
-// and optionally, structured detection data.
 const AiRadiographDetectionOutputSchema = z.object({
   processedRadiographDataUri: z
     .string()
     .describe(
       "The processed dental radiograph image with detections highlighted, as a data URI that must include a MIME type and use Base64 encoding. Expected format: 'data:<mimetype>;base64,<encoded_data>'."
     ),
-  // Future enhancement: If the external API provides structured detection data (e.g., bounding box coordinates, class labels)
-  // in addition to the processed image, this schema could be extended to include it for more advanced AR visualizations.
-  // For the current request focusing on visual highlighting on the image, the processed data URI is sufficient.
+  detections: z.array(DetectionItemSchema).describe('An array of detected objects from the radiograph analysis.'),
 });
 export type AiRadiographDetectionOutput = z.infer<typeof AiRadiographDetectionOutputSchema>;
 
@@ -59,11 +63,19 @@ const aiRadiographDetectionFlow = ai.defineFlow(
     if (!authorizationToken) {
       throw new Error('DENTAL_API_AUTH_TOKEN environment variable is not set.');
     }
+    
+    // The API likely expects a raw base64 string, not a full data URI.
+    const imageParts = input.radiographDataUri.split(',');
+    const base64Image = imageParts.length > 1 ? imageParts[1] : imageParts[0];
+
+    if (!base64Image) {
+        throw new Error('Invalid radiograph data URI format.');
+    }
 
     const requestBody = {
       class_list: classList,
       draw_boxes: true,
-      image: input.radiographDataUri,
+      image: base64Image,
     };
 
     try {
@@ -71,7 +83,7 @@ const aiRadiographDetectionFlow = ai.defineFlow(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Token ${authorizationToken}`, // Assuming Token-based auth
+          'Authorization': `Token ${authorizationToken}`,
         },
         body: JSON.stringify(requestBody),
       });
@@ -85,18 +97,15 @@ const aiRadiographDetectionFlow = ai.defineFlow(
 
       const apiResponse = await response.json();
 
-      // The user description states "Overlay detection results (bounding boxes, classifications)"
-      // "onto the original radiograph for clear visualization." and "visually highlight teeth".
-      // This strongly suggests the API returns an image already processed with detections.
-      // We assume the API response contains a field named 'processed_image' (or similar)
-      // that holds the data URI of this processed image.
-      // This field name should be confirmed by the actual API documentation.
       if (!apiResponse || typeof apiResponse.processed_image !== 'string') {
         throw new Error('External API response did not contain a valid processed image data URI in the "processed_image" field.');
       }
+      
+      const detections = (apiResponse.detections && Array.isArray(apiResponse.detections)) ? apiResponse.detections : [];
 
       return {
         processedRadiographDataUri: apiResponse.processed_image,
+        detections: detections,
       };
     } catch (error) {
       console.error('Error calling external radiograph detection API:', error);

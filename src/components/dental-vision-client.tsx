@@ -7,12 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { runAnalysis } from '@/app/actions';
+import { getAnalysisSummary, runAnalysis } from '@/app/actions';
 import { cn } from '@/lib/utils';
 
 export function DentalVisionClient() {
   const [originalImage, setOriginalImage] = useState<string | null>(null);
   const [processedImage, setProcessedImage] = useState<string | null>(null);
+  const [analysisSummary, setAnalysisSummary] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isDragging, setIsDragging] = useState(false);
@@ -35,6 +36,7 @@ export function DentalVisionClient() {
         setOriginalImage(e.target?.result as string);
         setFileName(file.name);
         setProcessedImage(null);
+        setAnalysisSummary(null);
       };
       reader.readAsDataURL(file);
     }
@@ -44,9 +46,21 @@ export function DentalVisionClient() {
     if (!originalImage) return;
 
     startTransition(async () => {
+      setProcessedImage(null);
+      setAnalysisSummary(null);
       const result = await runAnalysis({ radiographDataUri: originalImage });
       if (result.success) {
         setProcessedImage(result.data.processedRadiographDataUri);
+        if (result.data.detections && result.data.detections.length > 0) {
+          const summaryResult = await getAnalysisSummary({ detections: result.data.detections });
+          if (summaryResult.success) {
+            setAnalysisSummary(summaryResult.data.summary);
+          } else {
+            setAnalysisSummary(`Could not generate summary: ${summaryResult.error}`);
+          }
+        } else {
+          setAnalysisSummary('No specific items were detected in the analysis.');
+        }
       } else {
         toast({
           variant: 'destructive',
@@ -61,6 +75,7 @@ export function DentalVisionClient() {
     setOriginalImage(null);
     setProcessedImage(null);
     setFileName(null);
+    setAnalysisSummary(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -173,6 +188,27 @@ export function DentalVisionClient() {
                   </div>
                 )}
               </div>
+                <div className="space-y-4 pt-4">
+                  <h3 className="text-xl font-semibold text-primary/80 flex items-center gap-2">
+                    <Bot className="size-5" />
+                    Analysis Summary
+                  </h3>
+                  <Card className="bg-muted/30">
+                    <CardContent className="p-4">
+                        {isPending && !analysisSummary ? (
+                            <div className="space-y-2">
+                                <Skeleton className="h-4 w-3/4" />
+                                <Skeleton className="h-4 w-full" />
+                                <Skeleton className="h-4 w-1/2" />
+                            </div>
+                        ) : analysisSummary ? (
+                            <p className="text-sm text-foreground whitespace-pre-wrap">{analysisSummary}</p>
+                        ) : (
+                            <p className="text-sm text-muted-foreground">The AI-generated summary of findings will appear here once an analysis is complete.</p>
+                        )}
+                    </CardContent>
+                  </Card>
+                </div>
             </div>
           </div>
         </CardContent>
