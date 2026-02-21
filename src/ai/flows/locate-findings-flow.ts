@@ -37,9 +37,9 @@ const locateFindingsPrompt = ai.definePrompt({
   name: 'locateFindingsPrompt',
   input: { schema: LocateFindingsInputSchema },
   output: { schema: LocateFindingsOutputSchema },
-  prompt: `You are a specialist AI assistant for dental radiographs. You are an expert at identifying teeth based on their position in a panoramic X-ray. You understand the Universal Numbering System (teeth 1-16 are the upper jaw, 17-32 are the lower jaw; 1 is the upper-right third molar, 16 is the upper-left third molar, 17 is the lower-left third molar, and 32 is the lower-right third molar).
+  prompt: `You are a specialist AI assistant for dental radiographs. You are an expert at identifying teeth based on their position in a panoramic X-ray. You understand the FDI World Dental Federation notation. The mouth is divided into four quadrants for permanent teeth: upper right (11-18), upper left (21-28), lower left (31-38), and lower right (41-48). Numbering begins at the central incisor in each quadrant.
 
-You will be provided with a dental radiograph image and a list of dental findings, including tooth numbers.
+You will be provided with a dental radiograph image and a list of dental findings, including tooth numbers based on the FDI system.
 
 Your task is to analyze the image and locate each finding. For every finding in the input list, you must return a bounding box that precisely outlines the area of that specific finding on the corresponding tooth.
 
