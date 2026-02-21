@@ -85,11 +85,11 @@ export function DentalVisionClient() {
   };
 
   const handleGenerateAr = () => {
-    if (!originalImage || !analysisResults) return;
+    if (!processedImage || !analysisResults) return;
     
     startArTransition(async () => {
       setHotspots(null);
-      const result = await generateArHotspots({ radiographDataUri: originalImage, findings: analysisResults });
+      const result = await generateArHotspots({ processedRadiographDataUri: processedImage, findings: analysisResults });
 
       if (result.success) {
         setHotspots(result.data.hotspots);
