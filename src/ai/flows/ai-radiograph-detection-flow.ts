@@ -64,10 +64,11 @@ const aiRadiographDetectionFlow = ai.defineFlow(
       throw new Error('DENTAL_API_AUTH_TOKEN environment variable is not set.');
     }
     
-    if (!input.radiographDataUri || !input.radiographDataUri.startsWith('data:image/')) {
-        throw new Error('Invalid radiograph data URI format.');
+    if (!input.radiographDataUri || !input.radiographDataUri.includes(',')) {
+        throw new Error('Invalid radiograph data URI format. Expected format: data:<mimetype>;base64,<encoded_data>');
     }
 
+    // The API expects just the raw base64 string, not the full data URI.
     const base64Image = input.radiographDataUri.split(',')[1];
     if (!base64Image) {
         throw new Error('Could not extract base64 data from radiograph data URI.');
@@ -90,7 +91,6 @@ const aiRadiographDetectionFlow = ai.defineFlow(
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('External API Error:', errorText); // For server logs
       // Throw the raw error from the API to be displayed on the frontend
       throw new Error(errorText);
     }
@@ -106,11 +106,9 @@ const aiRadiographDetectionFlow = ai.defineFlow(
     }
     
     const detections = (apiResponse.detections && Array.isArray(apiResponse.detections)) ? apiResponse.detections : [];
-
-    let processedRadiographDataUri = apiResponse.processed_image;
-    if (!processedRadiographDataUri.startsWith('data:image/')) {
-        processedRadiographDataUri = `data:image/jpeg;base64,${processedRadiographDataUri}`;
-    }
+    
+    // The API returns a raw base64 string. We need to prepend the data URI prefix to display it.
+    const processedRadiographDataUri = `data:image/jpeg;base64,${apiResponse.processed_image}`;
 
     return {
       processedRadiographDataUri: processedRadiographDataUri,
