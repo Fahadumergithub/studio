@@ -68,16 +68,10 @@ const aiRadiographDetectionFlow = ai.defineFlow(
         throw new Error('Invalid radiograph data URI format. Expected format: data:<mimetype>;base64,<encoded_data>');
     }
 
-    // The API expects just the raw base64 string, not the full data URI.
-    const base64Image = input.radiographDataUri.split(',')[1];
-    if (!base64Image) {
-        throw new Error('Could not extract base64 data from radiograph data URI.');
-    }
-
     const requestBody = {
       class_list: classList,
       draw_boxes: true,
-      image: base64Image,
+      image: input.radiographDataUri,
     };
 
     const response = await fetch(apiUrl, {
@@ -92,23 +86,30 @@ const aiRadiographDetectionFlow = ai.defineFlow(
     if (!response.ok) {
       const errorText = await response.text();
       // Throw the raw error from the API to be displayed on the frontend
-      throw new Error(errorText);
+      throw new Error(`External API Error: ${response.status} ${response.statusText} - ${errorText}`);
     }
 
     const apiResponse = await response.json();
     console.log('External API Response:', JSON.stringify(apiResponse, null, 2));
 
-    if (!apiResponse || typeof apiResponse.processed_image !== 'string' || apiResponse.processed_image.trim() === '') {
+    if (!apiResponse || typeof apiResponse.result_img !== 'string' || apiResponse.result_img.trim() === '') {
       // Throw an error including the full API response if the expected field is missing
       throw new Error(
-        `API response did not contain "processed_image". Full response: ${JSON.stringify(apiResponse)}`
+        `API response did not contain "result_img". Full response: ${JSON.stringify(apiResponse)}`
       );
     }
     
-    const detections = (apiResponse.detections && Array.isArray(apiResponse.detections)) ? apiResponse.detections : [];
+    // The Postman response contains 'results_df' not 'detections'. Let's adapt.
+    // The summary flow expects 'detections' with 'class_name'. 'results_df' has 'disease'.
+    // We will map 'disease' to 'class_name' and provide dummy values for other fields.
+    const detections = (apiResponse.results_df && Array.isArray(apiResponse.results_df)) ? apiResponse.results_df.map((item: any) => ({
+        box: [0, 0, 0, 0],
+        class_id: 0,
+        class_name: item.disease || 'unknown',
+        score: item.score || 0 // score is not in results_df, default to 0
+    })) : [];
     
-    // The API returns a raw base64 string. We need to prepend the data URI prefix to display it.
-    const processedRadiographDataUri = `data:image/jpeg;base64,${apiResponse.processed_image}`;
+    const processedRadiographDataUri = apiResponse.result_img;
 
     return {
       processedRadiographDataUri: processedRadiographDataUri,
