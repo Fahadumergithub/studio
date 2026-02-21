@@ -2,25 +2,29 @@
 
 import { useState, useRef, useTransition } from 'react';
 import Image from 'next/image';
-import { Upload, X, Bot, ScanLine, Eye } from 'lucide-react';
+import { Upload, X, Bot, ScanLine, Eye, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { getAnalysisSummary, runAnalysis } from '@/app/actions';
+import { getAnalysisSummary, runAnalysis, generateArHotspots } from '@/app/actions';
 import type { AiRadiographDetectionOutput } from '@/ai/flows/ai-radiograph-detection-flow';
+import type { LocateFindingsOutput } from '@/ai/flows/locate-findings-flow';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 type AnalysisResults = AiRadiographDetectionOutput['results'];
+type Hotspot = LocateFindingsOutput['hotspots'][0];
 
 export function DentalVisionClient() {
   const [originalImage, setOriginalImage] = useState<string | null>(null);
   const [processedImage, setProcessedImage] = useState<string | null>(null);
   const [analysisResults, setAnalysisResults] = useState<AnalysisResults | null>(null);
   const [analysisSummary, setAnalysisSummary] = useState<string | null>(null);
+  const [hotspots, setHotspots] = useState<Hotspot[] | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [isAnalyzing, startAnalysisTransition] = useTransition();
+  const [isGeneratingAr, startArTransition] = useTransition();
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -38,11 +42,9 @@ export function DentalVisionClient() {
       }
       const reader = new FileReader();
       reader.onload = (e) => {
+        clearImage();
         setOriginalImage(e.target?.result as string);
         setFileName(file.name);
-        setProcessedImage(null);
-        setAnalysisResults(null);
-        setAnalysisSummary(null);
       };
       reader.readAsDataURL(file);
     }
@@ -51,10 +53,11 @@ export function DentalVisionClient() {
   const handleAnalyze = () => {
     if (!originalImage) return;
 
-    startTransition(async () => {
+    startAnalysisTransition(async () => {
       setProcessedImage(null);
       setAnalysisSummary(null);
       setAnalysisResults(null);
+      setHotspots(null);
 
       const result = await runAnalysis({ radiographDataUri: originalImage });
       if (result.success) {
@@ -81,12 +84,32 @@ export function DentalVisionClient() {
     });
   };
 
+  const handleGenerateAr = () => {
+    if (!originalImage || !analysisResults) return;
+    
+    startArTransition(async () => {
+      setHotspots(null);
+      const result = await generateArHotspots({ radiographDataUri: originalImage, findings: analysisResults });
+
+      if (result.success) {
+        setHotspots(result.data.hotspots);
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'AR Generation Failed',
+          description: result.error,
+        });
+      }
+    });
+  }
+
   const clearImage = () => {
     setOriginalImage(null);
     setProcessedImage(null);
     setAnalysisResults(null);
     setFileName(null);
     setAnalysisSummary(null);
+    setHotspots(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -105,6 +128,8 @@ export function DentalVisionClient() {
     setIsDragging(false);
     handleFileChange(e.dataTransfer.files);
   };
+  
+  const isPending = isAnalyzing || isGeneratingAr;
 
   return (
     <div className="space-y-8">
@@ -165,9 +190,17 @@ export function DentalVisionClient() {
                   />
                 </div>
               )}
-              <Button onClick={handleAnalyze} disabled={!originalImage || isPending} className="w-full" size="lg">
-                {isPending ? 'Analyzing...' : 'Analyze Radiograph'}
-              </Button>
+              <div className="flex gap-2">
+                <Button onClick={handleAnalyze} disabled={!originalImage || isAnalyzing} className="w-full" size="lg">
+                  {isAnalyzing ? 'Analyzing...' : 'Run Analysis'}
+                </Button>
+                {analysisResults && (
+                  <Button onClick={handleGenerateAr} disabled={isGeneratingAr || isAnalyzing} className="w-full" size="lg" variant="secondary">
+                     <Sparkles className="mr-2 h-4 w-4" />
+                    {isGeneratingAr ? 'Generating...' : 'Generate AR View'}
+                  </Button>
+                )}
+              </div>
             </div>
 
             <div className="space-y-4">
@@ -175,24 +208,43 @@ export function DentalVisionClient() {
                 <Bot className="size-6" />
                 2. Analysis Results
               </h2>
-              <div className="aspect-video w-full rounded-lg border bg-muted/30 flex items-center justify-center p-4">
-                {isPending ? (
+              <div className="aspect-video w-full rounded-lg border bg-muted/30 flex items-center justify-center p-4 relative">
+                {isAnalyzing ? (
                   <div className="w-full h-full flex flex-col items-center justify-center space-y-4">
                     <Skeleton className="w-full h-full" />
                     <p className="text-muted-foreground animate-pulse">AI is processing the image...</p>
                   </div>
+                ) : hotspots && originalImage ? (
+                  <>
+                  <Image src={originalImage} alt="AR Preview" fill className="rounded-lg object-contain w-full" />
+                  {hotspots.map((spot, index) => {
+                      const boxStyle = {
+                          left: `${spot.box[0] * 100}%`,
+                          top: `${spot.box[1] * 100}%`,
+                          width: `${(spot.box[2] - spot.box[0]) * 100}%`,
+                          height: `${(spot.box[3] - spot.box[1]) * 100}%`,
+                      };
+                      return (
+                          <TooltipProvider key={index}>
+                              <Tooltip>
+                                  <TooltipTrigger asChild>
+                                      <div
+                                          className="absolute border-2 border-primary/70 bg-primary/20 rounded-md animate-pulse hover:bg-primary/40 transition-colors"
+                                          style={boxStyle}
+                                      />
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                      <p className="font-semibold">{spot.disease} on tooth/teeth {spot.tooth_numbers.join(', ')}</p>
+                                  </TooltipContent>
+                              </Tooltip>
+                          </TooltipProvider>
+                      );
+                  })}
+              </>
                 ) : processedImage ? (
                   <Image
                     src={processedImage}
                     alt="Analyzed Radiograph"
-                    width={600}
-                    height={400}
-                    className="rounded-lg object-contain w-full"
-                  />
-                ) : originalImage ? (
-                  <Image
-                    src={originalImage}
-                    alt="Radiograph ready for analysis"
                     width={600}
                     height={400}
                     className="rounded-lg object-contain w-full"
@@ -213,8 +265,8 @@ export function DentalVisionClient() {
                     Analysis Summary
                   </h3>
                   <Card className="bg-muted/30">
-                    <CardContent className="p-4">
-                        {isPending && !analysisSummary ? (
+                    <CardContent className="p-4 min-h-[120px]">
+                        {isAnalyzing && !analysisSummary ? (
                             <div className="space-y-2">
                                 <Skeleton className="h-4 w-3/4" />
                                 <Skeleton className="h-4 w-full" />

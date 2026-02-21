@@ -2,6 +2,7 @@
 
 import { aiRadiographDetection, type AiRadiographDetectionInput, type AiRadiographDetectionOutput } from '@/ai/flows/ai-radiograph-detection-flow';
 import { aiAnalysisSummary, type AiAnalysisSummaryInput, type AiAnalysisSummaryOutput } from '@/ai/flows/ai-analysis-summary-flow';
+import { locateFindings, type LocateFindingsInput, type LocateFindingsOutput } from '@/ai/flows/locate-findings-flow';
 import { z } from 'zod';
 
 const runAnalysisSchema = z.object({
@@ -71,5 +72,25 @@ export async function getAnalysisSummary(input: AiAnalysisSummaryInput): Promise
     const error = e as Error;
     console.error('Error during summary generation:', error);
     return { success: false, error: 'Failed to generate summary.' };
+  }
+}
+
+type ArHotspotResult = {
+  success: true;
+  data: LocateFindingsOutput;
+} | {
+  success: false;
+  error: string;
+};
+
+export async function generateArHotspots(input: LocateFindingsInput): Promise<ArHotspotResult> {
+  // We can trust the input here since it comes from our own server action result
+  try {
+    const result = await locateFindings(input);
+    return { success: true, data: result };
+  } catch (e) {
+    const error = e as Error;
+    console.error('Error during AR hotspot generation:', error);
+    return { success: false, error: 'Failed to generate AR hotspots.' };
   }
 }
