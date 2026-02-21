@@ -11,21 +11,21 @@ import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 
 /**
- * Schema for a single detected item from the radiograph analysis.
+ * Schema for a single item from the analysis' results_df array.
  */
-const DetectionItemSchema = z.object({
-  box: z.array(z.number()).length(4).describe('Bounding box coordinates [x1, y1, x2, y2].'),
-  class_id: z.number().describe('ID of the detected class.'),
-  class_name: z.string().describe('Name of the detected class (e.g., "tooth_1", "decay_area").'),
-  score: z.number().describe('Confidence score of the detection.'),
+const ResultItemSchema = z.object({
+    disease: z.string().describe('The name of the disease or finding (e.g., "decay", "Filling").'),
+    count: z.number().describe('The number of teeth affected.'),
+    tooth_numbers: z.array(z.string()).describe('A list of the affected tooth numbers.'),
 });
+
 
 /**
  * Input schema for the AI analysis summary flow.
  * It expects an array of detected objects from a dental radiograph analysis.
  */
 const AiAnalysisSummaryInputSchema = z.object({
-  detections: z.array(DetectionItemSchema).describe('An array of detected objects from the radiograph analysis, including classifications and confidence scores.'),
+  results: z.array(ResultItemSchema).describe("An array of detected diseases and findings from the radiograph analysis's results_df field."),
 });
 export type AiAnalysisSummaryInput = z.infer<typeof AiAnalysisSummaryInputSchema>;
 
@@ -34,7 +34,7 @@ export type AiAnalysisSummaryInput = z.infer<typeof AiAnalysisSummaryInputSchema
  * It returns a concise textual summary of the findings.
  */
 const AiAnalysisSummaryOutputSchema = z.object({
-  summary: z.string().describe('A concise textual summary of the detected teeth and any identified potential issues.'),
+  summary: z.string().describe('A concise textual summary of the detected diseases, findings, and affected teeth.'),
 });
 export type AiAnalysisSummaryOutput = z.infer<typeof AiAnalysisSummaryOutputSchema>;
 
@@ -46,21 +46,21 @@ const aiAnalysisSummaryPrompt = ai.definePrompt({
   name: 'aiAnalysisSummaryPrompt',
   input: { schema: AiAnalysisSummaryInputSchema },
   output: { schema: AiAnalysisSummaryOutputSchema },
-  prompt: `You are an AI assistant specialized in dental radiograph analysis. Your task is to provide a concise summary of the detected teeth and any potential issues from the provided analysis results.
-Focus on key findings relevant to a dental professional.
+  prompt: `You are an AI dental assistant. Your task is to provide a clear and concise summary of the following dental radiograph analysis.
+Group the findings by category (Diseases Identified, Findings Observed, Existing Dental Work). For each item, list the name, the count, and the specific tooth numbers involved.
 
 Analysis Results:
-{{#if detections}}
-  {{#each detections}}
-    - Detected: {{this.class_name}} (Confidence: {{this.score}}) at coordinates [{{this.box.[0]}}, {{this.box.[1]}}, {{this.box.[2]}}, {{this.box.[3]}}]
+{{#if results}}
+  {{#each results}}
+    - {{this.disease}}: {{this.count}} tooth/teeth affected ({{#each this.tooth_numbers}}{{this}}{{#unless @last}}, {{/unless}}{{/each}})
   {{/each}}
 {{else}}
-  No specific detections were found.
+  No specific findings were provided in the analysis results.
 {{/if}}
 
-Please provide a summary of these findings, highlighting any areas of concern.`,
+Please provide a human-readable summary based on these findings.`,
   config: {
-    temperature: 0.2,
+    temperature: 0.3,
   }
 });
 

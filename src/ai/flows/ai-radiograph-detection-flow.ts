@@ -21,19 +21,20 @@ const AiRadiographDetectionInputSchema = z.object({
 });
 export type AiRadiographDetectionInput = z.infer<typeof AiRadiographDetectionInputSchema>;
 
-// Schema for a single detected item, to be included in the output.
-const DetectionItemSchema = z.object({
-  box: z.array(z.number()).length(4).describe('Bounding box coordinates [x1, y1, x2, y2].'),
-  class_id: z.number().describe('ID of the detected class.'),
-  class_name: z.string().describe('Name of the detected class (e.g., "tooth_1", "decay_area").'),
-  score: z.number().describe('Confidence score of the detection.'),
+// Schema for an item in the results_df array from the API
+const ResultDfItemSchema = z.object({
+    disease: z.string(),
+    count: z.number(),
+    tooth_numbers: z.array(z.string()),
 });
 
-// Output Schema for the radiograph detection flow. Now only returns detection data with coordinates.
+// Output Schema for the radiograph detection flow.
 const AiRadiographDetectionOutputSchema = z.object({
-  detections: z.array(DetectionItemSchema).describe('An array of detected objects from the radiograph analysis, including coordinates.'),
+    processedImage: z.string().describe('The processed image with boxes drawn on it, as a data URI.'),
+    results: z.array(ResultDfItemSchema).describe('An array of detected diseases and affected teeth.'),
 });
 export type AiRadiographDetectionOutput = z.infer<typeof AiRadiographDetectionOutputSchema>;
+
 
 // Wrapper function to call the Genkit flow
 export async function aiRadiographDetection(
@@ -63,10 +64,9 @@ const aiRadiographDetectionFlow = ai.defineFlow(
         throw new Error('Invalid radiograph data URI format. Expected format: data:<mimetype>;base64,<encoded_data>');
     }
 
-    // Requesting raw detection data with coordinates instead of a pre-rendered image.
     const requestBody = {
       class_list: classList,
-      draw_boxes: false, // Set to false to get coordinates
+      draw_boxes: true, // Get the image with boxes drawn on it
       image: input.radiographDataUri,
     };
 
@@ -85,29 +85,29 @@ const aiRadiographDetectionFlow = ai.defineFlow(
     }
 
     const apiResponse = await response.json();
-    console.log('External API Response:', JSON.stringify(apiResponse, null, 2));
-
-    // Assuming the API returns a 'detections' field that matches our schema when draw_boxes is false.
-    // The previous 'results_df' was a summary, not a list of detections with coordinates.
-    if (!apiResponse || !Array.isArray(apiResponse.detections)) {
-      // Throw an error including the full API response if the expected field is missing
+    
+    if (!apiResponse.result_img || !apiResponse.results_df) {
       throw new Error(
-        `API response did not contain a 'detections' array. This is needed for the AR experience. Full response: ${JSON.stringify(apiResponse)}`
+        `API response is missing 'result_img' or 'results_df'. Full response: ${JSON.stringify(apiResponse)}`
       );
     }
     
-    // The API might return a different structure. We'll parse it and ensure it fits our schema.
-    // This is a safer way to handle external API data.
-    const parsedDetections = z.array(DetectionItemSchema).safeParse(apiResponse.detections);
+    // The API returns a base64 string, ensure it's a valid data URI
+    const processedImageUri = apiResponse.result_img.startsWith('data:image')
+      ? apiResponse.result_img
+      : `data:image/jpeg;base64,${apiResponse.result_img}`;
 
-    if (!parsedDetections.success) {
-      throw new Error(
-        `API 'detections' field has an unexpected format. Full response: ${JSON.stringify(apiResponse)}`
-      );
+    const parsedResults = z.array(ResultDfItemSchema).safeParse(apiResponse.results_df);
+
+    if (!parsedResults.success) {
+        throw new Error(
+          `API 'results_df' field has an unexpected format. Full response: ${JSON.stringify(apiResponse)}`
+        );
     }
-    
+
     return {
-      detections: parsedDetections.data,
+      processedImage: processedImageUri,
+      results: parsedResults.data,
     };
   }
 );

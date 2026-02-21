@@ -8,6 +8,7 @@ const runAnalysisSchema = z.object({
   radiographDataUri: z.string().startsWith('data:image/'),
 });
 
+
 type AnalysisResult = {
   success: true;
   data: AiRadiographDetectionOutput;
@@ -39,15 +40,14 @@ export async function runAnalysis(input: AiRadiographDetectionInput): Promise<An
   }
 }
 
-const DetectionItemSchema = z.object({
-  box: z.array(z.number()).length(4),
-  class_id: z.number(),
-  class_name: z.string(),
-  score: z.number(),
+const ResultItemSchema = z.object({
+    disease: z.string(),
+    count: z.number(),
+    tooth_numbers: z.array(z.string()),
 });
 
 const getSummarySchema = z.object({
-  detections: z.array(DetectionItemSchema),
+  results: z.array(ResultItemSchema),
 });
 
 
