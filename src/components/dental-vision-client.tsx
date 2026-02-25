@@ -41,21 +41,31 @@ export function DentalVisionClient() {
   useEffect(() => {
     async function getCameraPermission() {
       if (hasCameraPermission === null) {
+        let stream: MediaStream | null = null;
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-          }
-          setHasCameraPermission(true);
+          // First, try for the environment-facing camera (e.g., on a phone)
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         } catch (error) {
-          console.error('Error accessing camera:', error);
-          setHasCameraPermission(false);
-          toast({
-            variant: 'destructive',
-            title: 'Camera Access Denied',
-            description: 'Please enable camera permissions in your browser settings.',
-          });
+          console.warn("Could not get environment camera, trying default/user camera.", error);
+          try {
+            // If that fails, try for any available camera (e.g., on a laptop)
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          } catch (finalError) {
+            console.error('Error accessing camera:', finalError);
+            setHasCameraPermission(false);
+            toast({
+              variant: 'destructive',
+              title: 'Camera Access Denied',
+              description: 'Please enable camera permissions in your browser settings to use the live analysis feature.',
+            });
+            return;
+          }
         }
+        
+        if (videoRef.current && stream) {
+          videoRef.current.srcObject = stream;
+        }
+        setHasCameraPermission(true);
       }
     }
     getCameraPermission();
@@ -70,6 +80,12 @@ export function DentalVisionClient() {
       if (videoRef.current && canvasRef.current) {
         const video = videoRef.current;
         const canvas = canvasRef.current;
+        
+        // Add check to ensure video has dimensions before capturing frame
+        if (video.videoWidth === 0 || video.videoHeight === 0) {
+            return; // Video not ready yet, skip this frame
+        }
+
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         const context = canvas.getContext('2d');
