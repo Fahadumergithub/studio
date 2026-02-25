@@ -9,7 +9,7 @@ export default function Home() {
             DentalVision AR
           </h1>
           <p className="mt-2 text-lg text-muted-foreground">
-            Upload a dental radiograph to detect teeth and potential issues with AI.
+            Upload a dental radiograph or use your camera for live AI analysis.
           </p>
         </header>
         <DentalVisionClient />
