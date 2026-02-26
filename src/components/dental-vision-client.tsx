@@ -85,6 +85,7 @@ export function DentalVisionClient() {
       if (videoRef.current) videoRef.current.srcObject = stream;
       setIsLiveActive(true);
       setShowLiveResults(false);
+      setCurrentProcessedImage(null);
     } catch (e) {
       toast({ variant: 'destructive', title: "Camera Access Denied", description: "Please allow camera access to use Live AR." });
     }
@@ -138,7 +139,10 @@ export function DentalVisionClient() {
         
         toast({ title: "Analysis Complete", description: "Clinical findings have been mapped." });
       } else {
-        toast({ variant: 'destructive', title: "Analysis Failed", description: result.error });
+        const errorMsg = result.error.toLowerCase().includes('argmin')
+          ? "AI could not identify the dental arch. Please center the OPG and ensure it is well-lit."
+          : result.error;
+        toast({ variant: 'destructive', title: "Analysis Failed", description: errorMsg });
       }
     } catch (e: any) {
       const errorMsg = e.message?.toLowerCase().includes('failed') 
@@ -173,13 +177,21 @@ export function DentalVisionClient() {
       try {
         const opg = await runOpgDetection({ imageDataUri: compressedForDetection });
         if (opg.isOpg && opg.boundingBox) {
-          const box = opg.boundingBox;
-          const cropX = box.x * canvas.width;
-          const cropY = box.y * canvas.height;
-          const cropW = box.width * canvas.width;
-          const cropH = box.height * canvas.height;
+          const { x, y, width, height } = opg.boundingBox;
           
-          if (cropW > 100 && cropH > 50) {
+          // Sanitization: Ensure coordinates are within 0-1 range
+          const sx = Math.max(0, Math.min(1, x));
+          const sy = Math.max(0, Math.min(1, y));
+          const sw = Math.max(0, Math.min(1 - sx, width));
+          const sh = Math.max(0, Math.min(1 - sy, height));
+          
+          // Only crop if the identified area is significant (at least 10% of frame)
+          if (sw > 0.1 && sh > 0.1) {
+            const cropX = sx * canvas.width;
+            const cropY = sy * canvas.height;
+            const cropW = sw * canvas.width;
+            const cropH = sh * canvas.height;
+            
             const cropCanvas = document.createElement('canvas');
             cropCanvas.width = cropW;
             cropCanvas.height = cropH;
@@ -399,14 +411,13 @@ export function DentalVisionClient() {
                         <h4 className="text-xs font-black uppercase text-primary">In-Situ Analysis Complete</h4>
                         <p className="text-[10px] text-muted-foreground uppercase font-bold">{currentResults?.length || 0} Findings Identified</p>
                       </div>
-                      <Button variant="outline" size="sm" onClick={initCamera} className="rounded-full h-10 px-4 font-black text-[10px] uppercase">
+                      <Button variant="outline" size="sm" onClick={() => { setShowLiveResults(false); initCamera(); }} className="rounded-full h-10 px-4 font-black text-[10px] uppercase">
                         <RefreshCcw className="mr-2 h-3 w-3" /> RETAKE
                       </Button>
                     </div>
                     
                     <Button 
                       onClick={() => {
-                        setShowLiveResults(false);
                         setActiveTab('consult');
                       }} 
                       size="lg" 
