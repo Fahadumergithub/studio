@@ -143,7 +143,6 @@ export function DentalVisionClient() {
   const handleCapture = async () => {
     if (!videoRef.current || !canvasRef.current) return;
     
-    // Visual Feedback: Flash effect
     setFlash(true);
     setTimeout(() => setFlash(false), 150);
 
@@ -156,10 +155,8 @@ export function DentalVisionClient() {
     
     setIsProcessingLive(true);
     try {
-      // Step 1: Compress for isolation attempt
       const compressedForDetection = await compressImage(rawUri);
       
-      // Step 2: OPG Isolation (permisssive/resilient)
       let finalUri = rawUri;
       try {
         const opg = await runOpgDetection({ imageDataUri: compressedForDetection });
@@ -170,20 +167,18 @@ export function DentalVisionClient() {
           const cropW = box.width * canvas.width;
           const cropH = box.height * canvas.height;
           
-          // Only crop if the box is reasonably sized
-          if (cropW > 50 && cropH > 50) {
+          if (cropW > 100 && cropH > 50) {
             const cropCanvas = document.createElement('canvas');
             cropCanvas.width = cropW;
             cropCanvas.height = cropH;
             cropCanvas.getContext('2d')?.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-            finalUri = cropCanvas.toDataURL('image/jpeg', 0.9);
+            finalUri = cropCanvas.toDataURL('image/jpeg', 0.95);
           }
         }
       } catch (opgError) {
-        console.warn('Isolation failed, using full frame:', opgError);
+        console.warn('Strict isolation failed, using full frame:', opgError);
       }
 
-      // Step 3: Clinical Analysis
       const highResCompressed = await compressImage(finalUri);
       setCurrentOriginalImage(highResCompressed);
       
@@ -340,19 +335,15 @@ export function DentalVisionClient() {
               <div className="relative aspect-[4/3] sm:aspect-video bg-black flex items-center justify-center overflow-hidden">
                 <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
                 
-                {/* Visual Feedback Flash */}
                 {flash && <div className="absolute inset-0 bg-white z-50 animate-out fade-out duration-300" />}
                 
-                {/* Clinical Scanning Guide Overlay */}
                 <div className="absolute inset-0 border-[30px] border-black/40 pointer-events-none">
                   <div className="w-full h-full border-2 border-primary/40 rounded-lg relative overflow-hidden">
-                    {/* Corner accents for the frame */}
                     <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-primary rounded-tl-sm" />
                     <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-primary rounded-tr-sm" />
                     <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-primary rounded-bl-sm" />
                     <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-primary rounded-br-sm" />
                     
-                    {/* Scanning animation line */}
                     <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-40 animate-scan" />
                   </div>
                 </div>
@@ -368,7 +359,7 @@ export function DentalVisionClient() {
                 {isProcessingLive && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm z-40">
                     <div className="h-16 w-16 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4" />
-                    <p className="text-white text-xs font-black uppercase tracking-widest animate-pulse">Processing Frame...</p>
+                    <p className="text-white text-xs font-black uppercase tracking-widest animate-pulse">Isolating Radiograph...</p>
                   </div>
                 )}
               </div>
@@ -379,7 +370,7 @@ export function DentalVisionClient() {
                 </Button>
                 <div className="flex items-center justify-center gap-2 mt-4 text-muted-foreground opacity-60">
                   <Info className="h-3 w-3" />
-                  <p className="text-[10px] font-black uppercase tracking-widest">Center jaw for clinical isolation</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-center">Center clinical frame to exclude background noise</p>
                 </div>
               </div>
               <canvas ref={canvasRef} className="hidden" />
@@ -492,7 +483,7 @@ export function DentalVisionClient() {
                         ) : (
                           <div className="flex flex-col items-center justify-center text-center pt-8 opacity-20">
                             <Bot className="h-12 w-12 mb-3" />
-                            <p className="text-[11px] font-black">TAP A FINDING FOR CLINICAL INSIGHTS.</p>
+                            <p className="text-[11px] font-black text-center">TAP A FINDING FOR CLINICAL INSIGHTS.</p>
                           </div>
                         )}
                       </section>

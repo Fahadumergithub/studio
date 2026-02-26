@@ -37,10 +37,10 @@ const opgDetectorPrompt = ai.definePrompt({
 Look for the characteristic 'horseshoe' or 'u-shaped' structure of the mandible and maxilla. The OPG contains the full dentition, roots, and surrounding bone.
 
 Instructions:
-1. Precision: Identify the exact boundaries of the radiograph film or digital frame. Include all teeth from wisdom tooth to wisdom tooth.
-2. Contextual Awareness: The OPG may be displayed on a computer monitor, held up to light, or printed. Focus exclusively on the clinical image content, ignoring monitor bezels, room backgrounds, or reflections.
-3. Stability: Ensure the bounding box is tight around the actual X-ray data area to maximize the quality of the subsequent cropping.
-4. Threshold: If the panoramic jaw structure is clearly identifiable, set isOpg to true even if the image quality is suboptimal.
+1. Precision: Identify the exact boundaries of the clinical radiograph frame. Focus strictly on the X-ray data area.
+2. Background Rejection: Explicitly ignore monitor bezels, room backgrounds, reflections, and any text or labels (patient names, dates, hospital logos) that appear outside the actual radiograph film or digital frame.
+3. Landscape Priority: OPGs are naturally landscape. Ensure the bounding box captures the full width from left to right condyle/wisdom tooth area.
+4. Stability: Ensure the bounding box is tight. If the jaw is clearly identifiable, set isOpg to true.
 
 Image: {{media url=imageDataUri}}`,
   config: {
