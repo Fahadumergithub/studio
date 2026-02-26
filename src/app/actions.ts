@@ -4,6 +4,7 @@ import { aiRadiographDetection, type AiRadiographDetectionInput, type AiRadiogra
 import { aiAnalysisSummary, type AiAnalysisSummaryInput, type AiAnalysisSummaryOutput } from '@/ai/flows/ai-analysis-summary-flow';
 import { detectOpg, type OpgDetectorInput, type OpgDetectorOutput } from '@/ai/flows/opg-detector-flow';
 import { radiographTutor, type RadiographTutorInput, type RadiographTutorOutput } from '@/ai/flows/radiograph-tutor-flow';
+import { locateFindings, type LocateFindingsInput, type LocateFindingsOutput } from '@/ai/flows/locate-findings-flow';
 import { z } from 'zod';
 
 const runAnalysisSchema = z.object({
@@ -46,6 +47,10 @@ export async function runOpgDetection(input: OpgDetectorInput): Promise<OpgDetec
 
 export async function getClinicalInsights(input: RadiographTutorInput): Promise<RadiographTutorOutput> {
   return radiographTutor(input);
+}
+
+export async function getFindingLocations(input: LocateFindingsInput): Promise<LocateFindingsOutput> {
+  return locateFindings(input);
 }
 
 const ResultItemSchema = z.object({
