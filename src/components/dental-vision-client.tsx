@@ -34,56 +34,72 @@ export function DentalVisionClient() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const { toast } = useToast();
 
   // Effect to get camera permission and stream
   useEffect(() => {
     async function getCameraPermission() {
-      if (hasCameraPermission === null) {
-        let stream: MediaStream | null = null;
-        try {
-          // First, try for the environment-facing camera (e.g., on a phone)
-          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        } catch (error) {
-          console.warn("Could not get environment camera, trying default/user camera.", error);
-          try {
-            // If that fails, try for any available camera (e.g., on a laptop)
-            stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          } catch (finalError) {
-            console.error('Error accessing camera:', finalError);
-            setHasCameraPermission(false);
-            toast({
-              variant: 'destructive',
-              title: 'Camera Access Denied',
-              description: 'Please enable camera permissions in your browser settings to use the live analysis feature.',
-            });
-            return;
-          }
-        }
+      try {
+        // First, try for the environment-facing camera (ideal for radiographs)
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: { ideal: 'environment' } } 
+        });
         
-        if (videoRef.current && stream) {
+        streamRef.current = stream;
+        if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
         setHasCameraPermission(true);
+      } catch (error) {
+        console.warn("Could not get environment camera, trying default camera.", error);
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          streamRef.current = stream;
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+          setHasCameraPermission(true);
+        } catch (finalError) {
+          console.error('Error accessing camera:', finalError);
+          setHasCameraPermission(false);
+          toast({
+            variant: 'destructive',
+            title: 'Camera Access Denied',
+            description: 'Please enable camera permissions in your browser settings to use the live analysis feature.',
+          });
+        }
       }
     }
-    getCameraPermission();
+
+    if (hasCameraPermission === null) {
+      getCameraPermission();
+    }
+
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
   }, [hasCameraPermission, toast]);
 
 
   const startLiveAnalysis = () => {
     setIsLiveAnalyzing(true);
-    setProcessedWebcamImage(null); // Clear previous overlay
+    setProcessedWebcamImage(null);
     
     intervalRef.current = setInterval(async () => {
       if (videoRef.current && canvasRef.current) {
         const video = videoRef.current;
         const canvas = canvasRef.current;
         
-        // Add check to ensure video has dimensions before capturing frame
-        if (video.videoWidth === 0 || video.videoHeight === 0) {
-            return; // Video not ready yet, skip this frame
+        // Ensure video is ready and has dimensions to avoid "Invalid input data" errors
+        if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+            return; 
         }
 
         canvas.width = video.videoWidth;
@@ -91,19 +107,17 @@ export function DentalVisionClient() {
         const context = canvas.getContext('2d');
         if (context) {
           context.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const dataUri = canvas.toDataURL('image/jpeg');
+          const dataUri = canvas.toDataURL('image/jpeg', 0.8);
 
-          // No transition needed here as it's a background task
           const result = await runAnalysis({ radiographDataUri: dataUri });
           if (result.success) {
             setProcessedWebcamImage(result.data.processedImage);
           } else {
-            // Don't show toast on intermittent errors to avoid spamming the user
             console.error("Live analysis frame failed:", result.error);
           }
         }
       }
-    }, 2000); // Analyze every 2 seconds
+    }, 2500); // Analyzed every 2.5 seconds to balance responsiveness and API load
   };
 
   const stopLiveAnalysis = () => {
@@ -113,15 +127,6 @@ export function DentalVisionClient() {
     }
     setProcessedWebcamImage(null);
   };
-  
-  // Cleanup interval on component unmount
-  useEffect(() => {
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, []);
 
   const handleFileChange = (files: FileList | null) => {
     if (files && files[0]) {
@@ -202,8 +207,6 @@ export function DentalVisionClient() {
     handleFileChange(e.dataTransfer.files);
   };
   
-  const isAnalyzingUpload = isAnalyzing;
-
   return (
     <div className="space-y-8">
       <Tabs defaultValue="upload" className="w-full">
@@ -270,8 +273,8 @@ export function DentalVisionClient() {
                     </div>
                   )}
                   <div className="flex gap-2">
-                    <Button onClick={handleAnalyze} disabled={!originalImage || isAnalyzingUpload} className="w-full" size="lg">
-                      {isAnalyzingUpload ? 'Analyzing...' : 'Run Analysis'}
+                    <Button onClick={handleAnalyze} disabled={!originalImage || isAnalyzing} className="w-full" size="lg">
+                      {isAnalyzing ? 'Analyzing...' : 'Run Analysis'}
                     </Button>
                   </div>
                 </div>
@@ -282,7 +285,7 @@ export function DentalVisionClient() {
                     2. Analysis Results
                   </h2>
                   <div className="aspect-video w-full rounded-lg border bg-muted/30 flex items-center justify-center p-4 relative">
-                    {isAnalyzingUpload ? (
+                    {isAnalyzing ? (
                       <div className="w-full h-full flex flex-col items-center justify-center space-y-4">
                         <Skeleton className="w-full h-full" />
                         <p className="text-muted-foreground animate-pulse">AI is processing the image...</p>
@@ -312,7 +315,7 @@ export function DentalVisionClient() {
                       </h3>
                       <Card className="bg-muted/30">
                         <CardContent className="p-4 min-h-[120px]">
-                            {isAnalyzingUpload && !analysisSummary ? (
+                            {isAnalyzing && !analysisSummary ? (
                                 <div className="space-y-2">
                                     <Skeleton className="h-4 w-3/4" />
                                     <Skeleton className="h-4 w-full" />
@@ -339,27 +342,34 @@ export function DentalVisionClient() {
                     <Camera className="size-6" />
                     Live AR Analysis
                   </h2>
-                  <div className="relative w-full aspect-video bg-black rounded-lg border flex items-center justify-center">
-                    <video ref={videoRef} className="w-full h-full object-contain rounded-md" autoPlay muted playsInline />
+                  <div className="relative w-full aspect-video bg-black rounded-lg border flex items-center justify-center overflow-hidden">
+                    <video 
+                      ref={videoRef} 
+                      className="w-full h-full object-contain" 
+                      autoPlay 
+                      muted 
+                      playsInline 
+                    />
                     {processedWebcamImage && (
-                      <Image
-                        src={processedWebcamImage}
-                        alt="Processed webcam overlay"
-                        layout="fill"
-                        objectFit="contain"
-                        className="absolute inset-0 z-10 opacity-75"
-                      />
+                      <div className="absolute inset-0 z-10 pointer-events-none">
+                        <Image
+                          src={processedWebcamImage}
+                          alt="Processed webcam overlay"
+                          fill
+                          className="object-contain opacity-70 transition-opacity duration-300"
+                        />
+                      </div>
                     )}
                     {hasCameraPermission === false && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 text-white p-4">
-                        <VideoOff className="size-12 mb-4"/>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 text-white p-4 z-20">
+                        <VideoOff className="size-12 mb-4 text-destructive"/>
                         <p className="text-lg font-semibold">Camera Access Denied</p>
-                        <p className="text-sm text-center">Please enable camera permissions in your browser settings to use this feature.</p>
+                        <p className="text-sm text-center mt-2">Please enable camera permissions in your browser settings to use this feature.</p>
                       </div>
                     )}
                      {isLiveAnalyzing && (
-                        <div className="absolute bottom-4 left-4 flex items-center gap-2 bg-black/50 text-white py-1 px-3 rounded-full text-sm">
-                            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
+                        <div className="absolute bottom-4 left-4 flex items-center gap-2 bg-black/60 text-white py-1.5 px-3 rounded-full text-sm z-20 backdrop-blur-sm">
+                            <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></div>
                             Analyzing Live...
                         </div>
                     )}
