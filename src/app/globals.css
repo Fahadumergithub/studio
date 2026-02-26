@@ -83,3 +83,23 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes progress {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(0); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes scan {
+  0% { top: 0%; }
+  50% { top: 100%; }
+  100% { top: 0%; }
+}
+
+.animate-progress {
+  animation: progress 2s infinite ease-in-out;
+}
+
+.animate-scan {
+  animation: scan 4s infinite linear;
+}

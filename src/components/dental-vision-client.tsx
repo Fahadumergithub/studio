@@ -2,7 +2,7 @@
 
 import { useState, useRef, useTransition, useEffect, useMemo } from 'react';
 import Image from 'next/image';
-import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, ListChecks, Sparkles, BookOpen, GraduationCap, ZoomIn, HelpCircle, ChevronRight } from 'lucide-react';
+import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, ListChecks, Sparkles, BookOpen, GraduationCap, ZoomIn, HelpCircle, ChevronRight, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -131,7 +131,11 @@ export function DentalVisionClient() {
         
         const croppedUri = cropCanvas.toDataURL('image/jpeg', 0.9);
         setCurrentOriginalImage(croppedUri);
-        await processImage(croppedUri);
+        
+        // Directly trigger analysis after Live Capture
+        startAnalysisTransition(async () => {
+          await processImage(croppedUri);
+        });
         stopLive();
       } else {
         toast({ title: "No OPG Identified", description: "Ensure the radiograph fills the frame and try again." });
@@ -150,11 +154,26 @@ export function DentalVisionClient() {
       reader.onload = (event) => {
         const dataUri = event.target?.result as string;
         setCurrentOriginalImage(dataUri);
-        startAnalysisTransition(async () => {
-          await processImage(dataUri);
-        });
+        // Clear old results to show confirmation UI
+        setCurrentResults(null);
+        setCurrentProcessedImage(null);
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  const clearUpload = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCurrentOriginalImage(null);
+    setCurrentResults(null);
+    setCurrentProcessedImage(null);
+  };
+
+  const startUploadAnalysis = () => {
+    if (currentOriginalImage) {
+      startAnalysisTransition(async () => {
+        await processImage(currentOriginalImage);
+      });
     }
   };
 
@@ -176,35 +195,99 @@ export function DentalVisionClient() {
         </TabsList>
 
         <TabsContent value="upload">
-          <Card className="border-primary/10 shadow-xl rounded-2xl overflow-hidden">
+          <Card className="border-primary/10 shadow-xl rounded-2xl overflow-hidden relative">
             <CardContent className="p-4 sm:p-8">
               <div 
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full aspect-video sm:aspect-[16/7] border-2 border-dashed border-primary/20 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-primary/5 transition-all group overflow-hidden relative"
+                onClick={() => !currentOriginalImage && fileInputRef.current?.click()}
+                className={cn(
+                  "w-full aspect-video sm:aspect-[16/7] border-2 border-dashed rounded-2xl flex flex-col items-center justify-center transition-all group overflow-hidden relative",
+                  currentOriginalImage ? "border-primary/40 bg-primary/5 cursor-default" : "border-primary/20 cursor-pointer hover:bg-primary/5"
+                )}
               >
-                {currentOriginalImage && !isAnalyzing ? (
-                  <Image src={currentOriginalImage} alt="Uploaded OPG" fill className="object-contain p-2" />
+                {currentOriginalImage ? (
+                  <>
+                    <Image src={currentOriginalImage} alt="Uploaded OPG" fill className="object-contain p-2" />
+                    <button 
+                      onClick={clearUpload}
+                      className="absolute top-4 right-4 h-10 w-10 bg-background/80 backdrop-blur shadow-md rounded-full flex items-center justify-center hover:bg-destructive hover:text-white transition-colors z-20"
+                    >
+                      <XCircle className="h-6 w-6" />
+                    </button>
+                  </>
                 ) : (
                   <>
                     <div className="h-16 w-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                       <Upload className="h-8 w-8 text-primary" />
                     </div>
-                    <p className="text-sm font-bold text-primary">SELECT PANORAMIC X-RAY</p>
+                    <p className="text-sm font-bold text-primary uppercase tracking-wider">Select Panoramic X-Ray</p>
                     <p className="text-[10px] text-muted-foreground mt-1 uppercase tracking-widest font-black opacity-60">JPG, PNG, DICOM</p>
                   </>
                 )}
-                {isAnalyzing && (
-                  <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
-                    <Loader2 className="h-10 w-10 text-primary animate-spin mb-4" />
-                    <p className="text-xs font-black uppercase tracking-widest text-primary">Analyzing Radiograph...</p>
-                  </div>
-                )}
               </div>
+
+              {/* AI Loading Screen Overlay */}
+              {isAnalyzing && (
+                <div className="absolute inset-0 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center z-50 animate-in fade-in duration-300">
+                  <div className="relative mb-8">
+                    <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
+                    <div className="relative h-24 w-24 bg-primary/10 rounded-full flex items-center justify-center border-4 border-primary/20">
+                      <Sparkles className="h-10 w-10 text-primary animate-pulse" />
+                    </div>
+                    {/* Floating elements */}
+                    <Bot className="absolute -top-2 -right-2 h-8 w-8 text-primary/40 animate-bounce delay-100" />
+                    <ScanLine className="absolute -bottom-2 -left-2 h-8 w-8 text-primary/40 animate-bounce delay-300" />
+                  </div>
+                  
+                  <div className="text-center space-y-2">
+                    <h3 className="text-xl font-black text-primary tracking-tighter uppercase">AI Engine Running</h3>
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="h-1 w-12 bg-primary/20 rounded-full overflow-hidden">
+                        <div className="h-full bg-primary animate-progress" />
+                      </div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground animate-pulse">
+                        Scanning Detections
+                      </p>
+                      <div className="h-1 w-12 bg-primary/20 rounded-full overflow-hidden">
+                        <div className="h-full bg-primary animate-progress" />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground max-w-[200px] mx-auto opacity-70 italic font-medium pt-4 leading-snug">
+                      Cross-referencing radiographic data with clinical pathology models...
+                    </p>
+                  </div>
+
+                  {/* Scanning Line Effect */}
+                  <div className="absolute inset-x-0 h-px bg-gradient-to-r from-transparent via-primary to-transparent opacity-50 shadow-[0_0_15px_rgba(var(--primary),0.5)] animate-scan" />
+                </div>
+              )}
+
               <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
-              <Button disabled={isAnalyzing} className="w-full h-16 mt-6 rounded-xl text-lg font-black shadow-lg shadow-primary/20" onClick={() => fileInputRef.current?.click()}>
-                {isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <ScanLine className="mr-2" />}
-                RUN CLINICAL ANALYSIS
-              </Button>
+              
+              {!currentResults && (
+                <div className="mt-6 space-y-4">
+                  {!currentOriginalImage ? (
+                    <Button disabled={isAnalyzing} className="w-full h-16 rounded-xl text-lg font-black shadow-lg shadow-primary/20" onClick={() => fileInputRef.current?.click()}>
+                      <ScanLine className="mr-2" />
+                      SELECT RADIOGRAPH
+                    </Button>
+                  ) : (
+                    <div className="flex flex-col gap-3 animate-in slide-in-from-top-2 duration-300">
+                      <div className="bg-primary/5 p-4 rounded-xl border border-primary/20 text-center">
+                        <p className="text-xs font-bold text-primary uppercase">Image Loaded Successfully</p>
+                        <p className="text-[10px] text-muted-foreground">Verify the image clarity before proceeding</p>
+                      </div>
+                      <Button 
+                        disabled={isAnalyzing} 
+                        className="w-full h-20 rounded-xl text-xl font-black shadow-2xl shadow-primary/30" 
+                        onClick={startUploadAnalysis}
+                      >
+                        {isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <Bot className="mr-3 h-6 w-6" />}
+                        RUN CLINICAL ANALYSIS
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -241,10 +324,18 @@ export function DentalVisionClient() {
                     <p className="text-white text-xs font-black uppercase tracking-[0.2em]">Detecting OPG Radiograph...</p>
                   </div>
                 )}
+
+                {/* Live Analysis Progress Overlay */}
+                {isAnalyzing && activeTab === 'live' && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-primary/20 backdrop-blur-sm z-50 animate-pulse">
+                    <div className="h-20 w-20 border-4 border-white/20 border-t-white rounded-full animate-spin mb-4" />
+                    <p className="text-white text-sm font-black uppercase tracking-widest">AI Analysis In Progress</p>
+                  </div>
+                )}
               </div>
               <div className="p-4 bg-background">
-                <Button onClick={handleCapture} disabled={isProcessingLive || !isLiveActive} size="lg" className="w-full h-20 text-xl font-black rounded-2xl shadow-xl active:scale-95 transition-transform">
-                  {isProcessingLive ? <Loader2 className="animate-spin mr-2" /> : <Target className="mr-3 h-6 w-6" />}
+                <Button onClick={handleCapture} disabled={isProcessingLive || !isLiveActive || isAnalyzing} size="lg" className="w-full h-20 text-xl font-black rounded-2xl shadow-xl active:scale-95 transition-transform">
+                  {isProcessingLive || isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <Target className="mr-3 h-6 w-6" />}
                   CAPTURE & ANALYZE
                 </Button>
                 <p className="text-center text-[10px] text-muted-foreground mt-4 uppercase tracking-tighter font-black opacity-60">CENTER THE PANORAMIC JAW FOR BEST RESULTS</p>
