@@ -2,7 +2,7 @@
 
 import { useState, useRef, useTransition, useEffect, useMemo } from 'react';
 import Image from 'next/image';
-import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle } from 'lucide-react';
+import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -27,6 +27,7 @@ export function DentalVisionClient() {
   const [clinicalInsights, setClinicalInsights] = useState<RadiographTutorOutput | null>(null);
   const [hotspots, setHotspots] = useState<Hotspots | null>(null);
   const [selectedFindingIndex, setSelectedFindingIndex] = useState<number | null>(null);
+  const [isAiRateLimited, setIsAiRateLimited] = useState(false);
   
   const [isAnalyzing, startAnalysisTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -50,8 +51,8 @@ export function DentalVisionClient() {
       const img = new window.Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 1200;
-        const MAX_HEIGHT = 1200;
+        const MAX_WIDTH = 1000; // Slightly smaller for better API performance
+        const MAX_HEIGHT = 1000;
         let width = img.width;
         let height = img.height;
 
@@ -70,7 +71,7 @@ export function DentalVisionClient() {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.8));
+        resolve(canvas.toDataURL('image/jpeg', 0.75));
       };
       img.src = dataUri;
     });
@@ -103,6 +104,7 @@ export function DentalVisionClient() {
     setClinicalInsights(null);
     setHotspots(null);
     setSelectedFindingIndex(null);
+    setIsAiRateLimited(false);
 
     try {
       const compressedUri = await compressImage(dataUri);
@@ -112,20 +114,27 @@ export function DentalVisionClient() {
         setCurrentProcessedImage(result.data.processedImage);
         setCurrentResults(result.data.results);
         
+        // Optional AI Enhancements (handled gracefully if rate limited)
         try {
           const [insights, locationData] = await Promise.all([
             getClinicalInsights({ originalImageDataUri: compressedUri, detections: result.data.results }),
             getFindingLocations({ processedRadiographDataUri: result.data.processedImage, findings: result.data.results })
           ]);
-          setClinicalInsights(insights);
-          setHotspots(locationData.hotspots);
+          
+          if (!insights || !locationData) {
+             setIsAiRateLimited(true);
+             toast({ title: "AI Busy", description: "Clinical tutoring is currently cooling down due to high usage." });
+          } else {
+            setClinicalInsights(insights);
+            setHotspots(locationData.hotspots);
+          }
         } catch (genAiError) {
-          console.error('GenAI assistance failed:', genAiError);
-          toast({ title: "Clinical Support Offline", description: "Analysis succeeded, but AI tutoring is currently unavailable." });
+          console.warn('GenAI assistance failed (possibly rate limited):', genAiError);
+          setIsAiRateLimited(true);
         }
         
         setActiveTab('consult');
-        toast({ title: "Clinical Analysis Complete", description: "Review findings and hotspots in the Consult tab." });
+        toast({ title: "Analysis Complete", description: "Review findings in the Consult tab." });
       } else {
         toast({ variant: 'destructive', title: "Analysis Failed", description: result.error });
       }
@@ -134,7 +143,7 @@ export function DentalVisionClient() {
       toast({ 
         variant: 'destructive', 
         title: "System Error", 
-        description: e.message || "A communication error occurred with the clinical server. Please check your network." 
+        description: e.message || "A communication error occurred. Please check your network." 
       });
     }
   };
@@ -174,10 +183,10 @@ export function DentalVisionClient() {
         });
         stopLive();
       } else {
-        toast({ title: "No OPG Identified", description: "Center the radiograph and ensure it is clearly visible." });
+        toast({ title: "No X-Ray Identified", description: "Ensure the panoramic radiograph is clear and centered." });
       }
     } catch (err: any) {
-      toast({ variant: 'destructive', title: "Detection Error", description: err.message || "Failed to identify the radiograph." });
+      toast({ variant: 'destructive', title: "Detection Error", description: "Failed to identify the radiograph." });
     } finally {
       setIsProcessingLive(false);
     }
@@ -366,7 +375,7 @@ export function DentalVisionClient() {
                     <h3 className="text-[10px] font-black uppercase text-primary tracking-widest flex items-center gap-2">
                       <Eye className="h-4 w-4" /> Clinical Review
                     </h3>
-                    <Badge variant="outline" className="text-[9px] font-black">TAP HOTSPOTS</Badge>
+                    {hotspots && <Badge variant="outline" className="text-[9px] font-black">TAP HOTSPOTS</Badge>}
                   </div>
                   <div className="relative aspect-[16/10] bg-black">
                     {currentProcessedImage && (
@@ -425,12 +434,22 @@ export function DentalVisionClient() {
                     <h2 className="text-lg font-black uppercase">AI Tutor</h2>
                   </div>
 
-                  {!clinicalInsights ? (
+                  {isAiRateLimited && (
+                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl mb-6 flex gap-3 items-start">
+                      <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-bold text-amber-900">AI is Busy</p>
+                        <p className="text-[10px] text-amber-800 leading-tight">Gemini has reached its hourly quota. Clinical tutoring will resume shortly.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {!clinicalInsights && !isAiRateLimited ? (
                     <div className="space-y-4">
                       <Skeleton className="h-24 w-full rounded-xl" />
                       <Skeleton className="h-40 w-full rounded-xl" />
                     </div>
-                  ) : (
+                  ) : clinicalInsights ? (
                     <div className="space-y-6">
                       <section className="bg-white p-5 rounded-2xl border border-primary/10 min-h-[180px]">
                         <h4 className="text-[10px] font-black uppercase text-primary/60 tracking-widest mb-4">
@@ -473,6 +492,12 @@ export function DentalVisionClient() {
                         <p className="text-[12px] font-bold">{clinicalInsights.studentTakeaway}</p>
                       </div>
                     </div>
+                  ) : (
+                     <div className="flex flex-col items-center justify-center text-center py-20 opacity-40">
+                        <HelpCircle className="h-12 w-12 mb-4" />
+                        <p className="text-sm font-bold uppercase">Tutoring Unavailable</p>
+                        <p className="text-[10px]">AI resources are currently exhausted. Please try again in 1 minute.</p>
+                     </div>
                   )}
                 </CardContent>
               </Card>

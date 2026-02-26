@@ -47,25 +47,31 @@ export async function runOpgDetection(input: OpgDetectorInput): Promise<OpgDetec
     return await detectOpg(input);
   } catch (e: any) {
     console.error('Error in OPG detection flow:', e.message);
+    // If rate limited, return a fallback object
+    if (e.message?.includes('429') || e.message?.includes('RESOURCE_EXHAUSTED')) {
+      return { isOpg: false, confidence: 0 };
+    }
     throw e;
   }
 }
 
-export async function getClinicalInsights(input: RadiographTutorInput): Promise<RadiographTutorOutput> {
+export async function getClinicalInsights(input: RadiographTutorInput): Promise<RadiographTutorOutput | null> {
   try {
     return await radiographTutor(input);
   } catch (e: any) {
-    console.error('Error in clinical insights flow:', e.message);
-    throw e;
+    console.warn('Gemini Rate Limit or Quota Error in clinical insights:', e.message);
+    // Return null instead of throwing to avoid breaking the client experience
+    return null;
   }
 }
 
-export async function getFindingLocations(input: LocateFindingsInput): Promise<LocateFindingsOutput> {
+export async function getFindingLocations(input: LocateFindingsInput): Promise<LocateFindingsOutput | null> {
   try {
     return await locateFindings(input);
   } catch (e: any) {
-    console.error('Error in finding locations flow:', e.message);
-    throw e;
+    console.warn('Gemini Rate Limit or Quota Error in finding locations:', e.message);
+    // Return null instead of throwing
+    return null;
   }
 }
 
