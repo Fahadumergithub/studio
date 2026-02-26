@@ -2,18 +2,20 @@
 
 import { useState, useRef, useTransition, useEffect } from 'react';
 import Image from 'next/image';
-import { Upload, X, Bot, ScanLine, Eye, Camera, Video, VideoOff, Info, Loader2, Target, ListChecks } from 'lucide-react';
+import { Upload, X, Bot, ScanLine, Eye, Camera, Video, VideoOff, Info, Loader2, Target, ListChecks, ArrowLeftRight, Maximize2, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { getAnalysisSummary, runAnalysis, runOpgDetection } from '@/app/actions';
+import { getAnalysisSummary, runAnalysis, runOpgDetection, getFindingLocations } from '@/app/actions';
 import type { AiRadiographDetectionOutput } from '@/ai/flows/ai-radiograph-detection-flow';
+import type { LocateFindingsOutput } from '@/ai/flows/locate-findings-flow';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 
 type AnalysisResults = AiRadiographDetectionOutput['results'];
+type Hotspots = LocateFindingsOutput['hotspots'];
 
 export function DentalVisionClient() {
   // State for Upload workflow
@@ -30,9 +32,12 @@ export function DentalVisionClient() {
   const [isCheckingOpg, setIsCheckingOpg] = useState(false);
   const [processedWebcamImage, setProcessedWebcamImage] = useState<string | null>(null);
   const [liveResults, setLiveResults] = useState<AnalysisResults | null>(null);
+  const [hotspots, setHotspots] = useState<Hotspots>([]);
+  const [activeHotspot, setActiveHotspot] = useState<string | null>(null);
   const [overlayStyle, setOverlayStyle] = useState<React.CSSProperties>({});
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
   const [flash, setFlash] = useState(false);
+  const [isInspecting, setIsInspecting] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -95,7 +100,6 @@ export function DentalVisionClient() {
       setTimeout(() => setFlash(false), 150);
     }
 
-    // High resolution for detection accuracy
     const MAX_DIMENSION = 1280;
     let width = video.videoWidth;
     let height = video.videoHeight;
@@ -144,6 +148,14 @@ export function DentalVisionClient() {
             if (result.success) {
               setProcessedWebcamImage(result.data.processedImage);
               setLiveResults(result.data.results);
+              
+              // Map hotspots for interactivity
+              const locationResult = await getFindingLocations({
+                processedRadiographDataUri: result.data.processedImage,
+                findings: result.data.results
+              });
+              setHotspots(locationResult.hotspots);
+
               setOverlayStyle({
                 left: `${(cropX / width) * 100}%`,
                 top: `${(cropY / height) * 100}%`,
@@ -151,6 +163,11 @@ export function DentalVisionClient() {
                 height: `${(cropHeight / height) * 100}%`,
                 position: 'absolute'
               });
+
+              if (manual) {
+                setIsInspecting(true);
+              }
+
               setIsCheckingOpg(false);
               return true;
             }
@@ -175,11 +192,13 @@ export function DentalVisionClient() {
     if (!success) return;
 
     setIsLiveAnalyzing(true);
+    setIsInspecting(false);
     setProcessedWebcamImage(null);
     setLiveResults(null);
+    setHotspots([]);
     
     const loop = async () => {
-      if (!isLiveAnalyzing) return;
+      if (!isLiveAnalyzing || isInspecting) return;
       await captureAndAnalyze();
       loopRef.current = setTimeout(loop, 5000);
     };
@@ -189,6 +208,7 @@ export function DentalVisionClient() {
 
   const stopLiveAnalysis = () => {
     setIsLiveAnalyzing(false);
+    setIsInspecting(false);
     if (loopRef.current) {
       clearTimeout(loopRef.current);
       loopRef.current = null;
@@ -199,6 +219,7 @@ export function DentalVisionClient() {
     }
     setProcessedWebcamImage(null);
     setLiveResults(null);
+    setHotspots([]);
   };
 
   const handleFileChange = (files: FileList | null) => {
@@ -267,7 +288,7 @@ export function DentalVisionClient() {
   };
 
   return (
-    <div className="space-y-4 sm:space-y-8 max-w-4xl mx-auto">
+    <div className="space-y-4 sm:space-y-8 max-w-4xl mx-auto pb-20">
       <Tabs defaultValue="upload" className="w-full">
         <TabsList className="grid w-full grid-cols-2 mb-4">
           <TabsTrigger value="upload" onClick={stopLiveAnalysis} className="py-2.5">
@@ -374,20 +395,31 @@ export function DentalVisionClient() {
                   <div className="flex items-center justify-between">
                     <h2 className="text-xl sm:text-2xl font-semibold text-primary/90 flex items-center gap-2">
                       <Camera className="size-5 sm:size-6" />
-                      Live AR Session
+                      {isInspecting ? 'Inspection Mode' : 'Live AR Session'}
                     </h2>
                     <div className="flex items-center gap-2">
+                      {isInspecting && (
+                         <Button variant="ghost" size="sm" onClick={() => setIsInspecting(false)} className="text-[10px] uppercase font-bold text-primary">
+                           <ArrowLeftRight className="mr-1 h-3 w-3" /> Back to Live
+                         </Button>
+                      )}
                       <div className="text-[10px] text-muted-foreground bg-accent px-2 py-1 rounded-full flex items-center gap-1 uppercase font-bold tracking-tight">
                         {isCheckingOpg ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                        {isCheckingOpg ? 'Analyzing...' : 'Ready'}
+                        {isCheckingOpg ? 'Processing...' : 'System Ready'}
                       </div>
                     </div>
                   </div>
                   
-                  <div className="relative w-full aspect-[4/3] sm:aspect-video bg-black rounded-xl border flex items-center justify-center overflow-hidden shadow-2xl">
+                  <div className={cn(
+                    "relative w-full bg-black rounded-xl border flex items-center justify-center overflow-hidden shadow-2xl transition-all duration-500",
+                    isInspecting ? "aspect-square sm:aspect-video" : "aspect-[4/3] sm:aspect-video"
+                  )}>
                     <video 
                       ref={videoRef} 
-                      className="w-full h-full object-cover sm:object-contain" 
+                      className={cn(
+                        "w-full h-full object-cover sm:object-contain transition-opacity duration-300",
+                        isInspecting ? "opacity-30 blur-sm scale-95" : "opacity-100"
+                      )} 
                       autoPlay 
                       muted 
                       playsInline 
@@ -395,7 +427,7 @@ export function DentalVisionClient() {
                     
                     {flash && <div className="absolute inset-0 bg-white z-50 animate-out fade-out duration-150" />}
 
-                    {!processedWebcamImage && isLiveAnalyzing && (
+                    {!processedWebcamImage && isLiveAnalyzing && !isInspecting && (
                       <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                         <div className="w-[90%] h-[70%] sm:w-[85%] sm:h-[75%] border-2 border-primary/40 rounded-2xl flex items-center justify-center bg-primary/5">
                           <div className="absolute top-1/2 left-0 right-0 h-px bg-primary/20" />
@@ -408,13 +440,46 @@ export function DentalVisionClient() {
                     )}
 
                     {processedWebcamImage && (
-                      <div className="z-10 pointer-events-none" style={overlayStyle}>
-                        <Image
-                          src={processedWebcamImage}
-                          alt="AI Analysis Overlay"
-                          fill
-                          className="object-contain opacity-90 animate-in fade-in zoom-in-95 duration-500"
-                        />
+                      <div 
+                        className={cn(
+                          "z-10 transition-all duration-500",
+                          isInspecting ? "w-[95%] h-[95%] left-[2.5%] top-[2.5%] absolute flex items-center justify-center" : ""
+                        )} 
+                        style={isInspecting ? {} : overlayStyle}
+                      >
+                        <div className="relative w-full h-full">
+                          <Image
+                            src={processedWebcamImage}
+                            alt="AI Analysis Overlay"
+                            fill
+                            className="object-contain opacity-100 animate-in fade-in zoom-in-95 duration-500"
+                          />
+                          {/* Hotspots layer */}
+                          {hotspots.map((h, i) => (
+                            <div
+                              key={i}
+                              onClick={() => setActiveHotspot(h.disease)}
+                              className={cn(
+                                "absolute border-2 rounded shadow-[0_0_15px] cursor-pointer transition-all duration-300 pointer-events-auto",
+                                activeHotspot === h.disease 
+                                  ? "border-yellow-400 bg-yellow-400/20 shadow-yellow-400 z-50 scale-105" 
+                                  : "border-primary/60 bg-primary/5 shadow-primary/20"
+                              )}
+                              style={{
+                                left: `${h.box[0] * 100}%`,
+                                top: `${h.box[1] * 100}%`,
+                                width: `${(h.box[2] - h.box[0]) * 100}%`,
+                                height: `${(h.box[3] - h.box[1]) * 100}%`,
+                              }}
+                            >
+                              {activeHotspot === h.disease && (
+                                <div className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap bg-yellow-400 text-black text-[8px] font-black uppercase px-2 py-0.5 rounded shadow-lg animate-in fade-in slide-in-from-bottom-1">
+                                  {h.disease}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
 
@@ -431,13 +496,13 @@ export function DentalVisionClient() {
                       </div>
                     )}
 
-                    {isLiveAnalyzing && (
+                    {isLiveAnalyzing && !isInspecting && (
                       <div className="absolute top-3 left-3 sm:top-4 sm:left-4 flex items-center gap-2 bg-black/70 text-white py-1.5 px-3 rounded-full text-[9px] sm:text-[10px] font-bold uppercase tracking-widest z-20 backdrop-blur-md border border-white/10 shadow-xl">
                         <div className={cn(
                           "w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shadow-[0_0_8px]",
                           processedWebcamImage ? "bg-green-500 shadow-green-500/50" : (isCheckingOpg ? "bg-blue-500 animate-pulse shadow-blue-500/50" : "bg-yellow-500 shadow-yellow-500/50")
                         )} />
-                        {processedWebcamImage ? "Analysis Live" : (isCheckingOpg ? "Processing..." : "Scanning...")}
+                        {processedWebcamImage ? "Analysis Live" : (isCheckingOpg ? "Aligning..." : "Scanning...")}
                       </div>
                     )}
                   </div>
@@ -451,8 +516,8 @@ export function DentalVisionClient() {
                         className="w-full h-14 sm:h-16 shadow-lg text-base sm:text-lg font-bold rounded-xl" 
                         size="lg"
                       >
-                        <Video className="mr-2 h-6 w-6"/>
-                        Launch AR Clinical Session
+                        <Zap className="mr-2 h-6 w-6 text-yellow-400 fill-yellow-400 animate-pulse"/>
+                        Launch Clinical AI Session
                       </Button>
                     ) : (
                       <div className="grid grid-cols-2 gap-3">
@@ -472,24 +537,34 @@ export function DentalVisionClient() {
                           variant="destructive"
                         >
                           <VideoOff className="mr-2 h-5 w-5"/>
-                          End Session
+                          End
                         </Button>
                       </div>
                     )}
                   </div>
 
                   {liveResults && liveResults.length > 0 && (
-                    <Card className="bg-primary/5 border-primary/20 animate-in slide-in-from-bottom-2 duration-300 shadow-sm">
+                    <Card className="bg-primary/5 border-primary/20 animate-in slide-in-from-bottom-2 duration-300 shadow-sm overflow-hidden">
                       <CardContent className="p-3 sm:p-4">
                         <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-primary/70 mb-3 flex items-center gap-2">
-                          <ListChecks className="h-4 w-4" /> Live Results
+                          <ListChecks className="h-4 w-4" /> Detection Details
                         </h3>
                         <div className="flex flex-wrap gap-1.5 sm:gap-2">
                           {liveResults.map((finding, idx) => (
-                            <Badge key={idx} variant="outline" className="bg-background/90 py-1 sm:py-1.5 px-2 sm:px-3 border-primary/20 flex items-center gap-1.5 shadow-sm text-[10px] sm:text-xs">
-                              <span className="font-bold text-primary">{finding.disease}</span>
-                              <span className="text-muted-foreground font-medium">{finding.count}x</span>
-                              <span className="text-primary/50 font-mono">Teeth: {finding.tooth_numbers.join(', ')}</span>
+                            <Badge 
+                              key={idx} 
+                              variant="outline" 
+                              onClick={() => setActiveHotspot(finding.disease)}
+                              className={cn(
+                                "py-1 sm:py-1.5 px-2 sm:px-3 flex items-center gap-1.5 shadow-sm text-[10px] sm:text-xs cursor-pointer transition-colors",
+                                activeHotspot === finding.disease 
+                                  ? "bg-yellow-400 border-yellow-500 text-black font-black" 
+                                  : "bg-background/90 border-primary/20 text-foreground"
+                              )}
+                            >
+                              <span className="font-bold">{finding.disease}</span>
+                              <span className="opacity-60 font-medium">{finding.count}x</span>
+                              <span className="opacity-40 font-mono">({finding.tooth_numbers.join(', ')})</span>
                             </Badge>
                           ))}
                         </div>
@@ -499,10 +574,10 @@ export function DentalVisionClient() {
 
                   <div className="flex flex-col gap-1.5 items-center">
                     <p className="text-[9px] text-center text-muted-foreground uppercase tracking-[0.3em] font-black opacity-60">
-                      Smart Radiograph Alignment
+                      Multi-modal Clinical Logic
                     </p>
                     <p className="text-[9px] text-center text-muted-foreground/60 leading-relaxed max-w-xs px-4">
-                      Position the panoramic X-ray within the scanning frame. AI automatically crops and analyzes findings.
+                      Tap hotspots or result badges to highlight specific clinical findings on the high-fidelity radiograph.
                     </p>
                   </div>
                </div>
