@@ -3,7 +3,7 @@
 import { aiRadiographDetection, type AiRadiographDetectionInput, type AiRadiographDetectionOutput } from '@/ai/flows/ai-radiograph-detection-flow';
 import { aiAnalysisSummary, type AiAnalysisSummaryInput, type AiAnalysisSummaryOutput } from '@/ai/flows/ai-analysis-summary-flow';
 import { detectOpg, type OpgDetectorInput, type OpgDetectorOutput } from '@/ai/flows/opg-detector-flow';
-import { locateFindings, type LocateFindingsInput, type LocateFindingsOutput } from '@/ai/flows/locate-findings-flow';
+import { radiographTutor, type RadiographTutorInput, type RadiographTutorOutput } from '@/ai/flows/radiograph-tutor-flow';
 import { z } from 'zod';
 
 const runAnalysisSchema = z.object({
@@ -44,6 +44,10 @@ export async function runOpgDetection(input: OpgDetectorInput): Promise<OpgDetec
   return detectOpg(input);
 }
 
+export async function getClinicalInsights(input: RadiographTutorInput): Promise<RadiographTutorOutput> {
+  return radiographTutor(input);
+}
+
 const ResultItemSchema = z.object({
     disease: z.string(),
     count: z.number(),
@@ -75,8 +79,4 @@ export async function getAnalysisSummary(input: AiAnalysisSummaryInput): Promise
     console.error('Error during summary generation:', error);
     return { success: false, error: 'Failed to generate summary.' };
   }
-}
-
-export async function getFindingLocations(input: LocateFindingsInput): Promise<LocateFindingsOutput> {
-  return locateFindings(input);
 }
