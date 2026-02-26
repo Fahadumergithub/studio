@@ -126,37 +126,42 @@ export function DentalVisionClient() {
             const opgDetection = await runOpgDetection({ imageDataUri: rawDataUri });
             setIsCheckingOpg(false);
 
+            console.log("OPG Detection Result:", opgDetection);
+
             if (opgDetection.isOpg && opgDetection.boundingBox) {
               const box = opgDetection.boundingBox;
               
               // 2. Crop the image to just the OPG
-              const cropX = box.x * width;
-              const cropY = box.y * height;
-              const cropWidth = box.width * width;
-              const cropHeight = box.height * height;
+              // Ensure coordinates are within valid range
+              const cropX = Math.max(0, box.x * width);
+              const cropY = Math.max(0, box.y * height);
+              const cropWidth = Math.min(width - cropX, box.width * width);
+              const cropHeight = Math.min(height - cropY, box.height * height);
 
-              const cropCanvas = document.createElement('canvas');
-              cropCanvas.width = cropWidth;
-              cropCanvas.height = cropHeight;
-              const cropCtx = cropCanvas.getContext('2d');
-              
-              if (cropCtx) {
-                cropCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-                const croppedDataUri = cropCanvas.toDataURL('image/jpeg', 0.8);
+              if (cropWidth > 50 && cropHeight > 50) {
+                const cropCanvas = document.createElement('canvas');
+                cropCanvas.width = cropWidth;
+                cropCanvas.height = cropHeight;
+                const cropCtx = cropCanvas.getContext('2d');
+                
+                if (cropCtx) {
+                  cropCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+                  const croppedDataUri = cropCanvas.toDataURL('image/jpeg', 0.8);
 
-                // 3. Run dental analysis on the cropped image
-                const result = await runAnalysis({ radiographDataUri: croppedDataUri });
-                if (result.success) {
-                  setProcessedWebcamImage(result.data.processedImage);
-                  
-                  // 4. Map the overlay to the correct position on the video
-                  setOverlayStyle({
-                    left: `${box.x * 100}%`,
-                    top: `${box.y * 100}%`,
-                    width: `${box.width * 100}%`,
-                    height: `${box.height * 100}%`,
-                    position: 'absolute'
-                  });
+                  // 3. Run dental analysis on the cropped image
+                  const result = await runAnalysis({ radiographDataUri: croppedDataUri });
+                  if (result.success) {
+                    setProcessedWebcamImage(result.data.processedImage);
+                    
+                    // 4. Map the overlay to the correct position on the video
+                    setOverlayStyle({
+                      left: `${(cropX / width) * 100}%`,
+                      top: `${(cropY / height) * 100}%`,
+                      width: `${(cropWidth / width) * 100}%`,
+                      height: `${(cropHeight / height) * 100}%`,
+                      position: 'absolute'
+                    });
+                  }
                 }
               }
             } else {

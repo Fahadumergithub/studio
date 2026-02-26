@@ -21,7 +21,7 @@ const OpgDetectorOutputSchema = z.object({
   confidence: z.number().describe('Confidence score from 0 to 1.'),
   boundingBox: z.object({
     x: z.number().describe('Normalized x-coordinate of the top-left corner (0.0 to 1.0).'),
-    y: z.number().describe('Normalized y-coordinate of the top-left corner (0.0 to 1.0).'),
+    y: z.number().describe('Normalized x-coordinate of the top-left corner (0.0 to 1.0).'),
     width: z.number().describe('Normalized width (0.0 to 1.0).'),
     height: z.number().describe('Normalized height (0.0 to 1.0).'),
   }).optional().describe('The bounding box of the OPG radiograph if detected.'),
@@ -36,10 +36,11 @@ const opgDetectorPrompt = ai.definePrompt({
 Look at the provided image and determine if it contains an OPG (Orthopantomogram), which is a panoramic dental X-ray showing all teeth in a single wide image.
 
 Instructions:
-1. Identifying OPG: Look for the characteristic curved jaw structure and panoramic view of all teeth. It may be displayed on a computer monitor, a lightbox, or be a physical film.
-2. Bounding Box: If an OPG is present, provide the tightest possible bounding box around the X-ray area itself.
-3. Coordinates: Use normalized [0, 1] coordinates. x and y are the top-left corner.
-4. isOpg: Set to true if a panoramic dental x-ray is identifiable.
+1. Identifying OPG: Look for the characteristic curved jaw structure and panoramic view of all teeth. 
+2. Screen Awareness: The OPG may be displayed on a computer monitor, a lightbox, or be a physical film. Even if there are reflections, bezel frames, or it's viewed at an angle, if the panoramic X-ray content is identifiable, set isOpg to true.
+3. Bounding Box: Provide the tightest possible bounding box around the X-ray content area itself. Exclude monitor bezels or wall backgrounds.
+4. Coordinates: Use normalized [0, 1] coordinates. x and y are the top-left corner. width and height are the dimensions.
+5. isOpg: Set to true if a panoramic dental x-ray is identifiable in the frame.
 
 Image: {{media url=imageDataUri}}`,
 });
