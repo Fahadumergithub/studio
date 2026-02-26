@@ -19,6 +19,7 @@ type AnalysisResults = AiRadiographDetectionOutput['results'];
 type Hotspots = LocateFindingsOutput['hotspots'];
 
 export function DentalVisionClient() {
+  const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState('upload');
   
   const [currentOriginalImage, setCurrentOriginalImage] = useState<string | null>(null);
@@ -44,6 +45,7 @@ export function DentalVisionClient() {
   const { toast } = useToast();
 
   useEffect(() => {
+    setMounted(true);
     return () => stopLive();
   }, []);
 
@@ -111,7 +113,7 @@ export function DentalVisionClient() {
       const compressedUri = await compressImage(dataUri, 1200);
       let result = await runAnalysis({ radiographDataUri: compressedUri });
       
-      // Zero-Failure Fallback: If crop results in a server error, try the original full frame
+      // Zero-Failure Fallback: If crop results in a server error (like 'argmin'), try the original full frame
       if (!result.success && originalFallbackUri) {
         console.warn('Analysis of isolated frame failed, retrying with full frame fallback...');
         const compressedFallback = await compressImage(originalFallbackUri, 1200);
@@ -178,6 +180,7 @@ export function DentalVisionClient() {
     
     setIsProcessingLive(true);
     try {
+      // Use lower res for detection to prevent timeout
       const compressedForDetection = await compressImage(rawUri, 600);
       
       let finalUri = rawUri;
@@ -186,7 +189,7 @@ export function DentalVisionClient() {
         if (opg.isOpg && opg.boundingBox) {
           const { x, y, width, height } = opg.boundingBox;
           
-          // Sanitization: Ensure coordinates are within 0-1 range
+          // Sanitization: Ensure coordinates are within 0-1 range and have minimum size
           const sx = Math.max(0, Math.min(1, x));
           const sy = Math.max(0, Math.min(1, y));
           const sw = Math.max(0.1, Math.min(1 - sx, width));
@@ -264,6 +267,15 @@ export function DentalVisionClient() {
       p.condition.toLowerCase().includes(disease) || disease.includes(p.condition.toLowerCase())
     );
   }, [clinicalInsights, selectedFindingIndex, currentResults]);
+
+  if (!mounted) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        <p className="text-sm font-bold uppercase tracking-widest opacity-50">Initializing Dental AR...</p>
+      </div>
+    );
+  }
 
   const LoadingOverlay = () => (
     <div className="absolute inset-0 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center z-50 animate-in fade-in duration-300">
