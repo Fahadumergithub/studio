@@ -142,6 +142,8 @@ export function DentalVisionClient() {
 
   const handleCapture = async () => {
     if (!videoRef.current || !canvasRef.current) return;
+    
+    // Trigger visual flash feedback
     setFlash(true);
     setTimeout(() => setFlash(false), 150);
 
@@ -154,42 +156,45 @@ export function DentalVisionClient() {
     
     setIsProcessingLive(true);
     try {
-      // Compress for AI detection to avoid payload limits
+      // Step 1: Attempt to compress for OPG detection
       const compressedForDetection = await compressImage(rawUri);
-      const opg = await runOpgDetection({ imageDataUri: compressedForDetection });
       
+      // Step 2: Try OPG detection, but fall back silently if it fails (e.g. rate limit)
       let finalUri = rawUri;
-
-      if (opg.isOpg && opg.boundingBox) {
-        const box = opg.boundingBox;
-        const cropX = box.x * canvas.width;
-        const cropY = box.y * canvas.height;
-        const cropW = box.width * canvas.width;
-        const cropH = box.height * canvas.height;
-        
-        // Safety check for crop dimensions
-        if (cropW > 50 && cropH > 50) {
-          const cropCanvas = document.createElement('canvas');
-          cropCanvas.width = cropW;
-          cropCanvas.height = cropH;
-          cropCanvas.getContext('2d')?.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-          finalUri = cropCanvas.toDataURL('image/jpeg', 0.9);
+      try {
+        const opg = await runOpgDetection({ imageDataUri: compressedForDetection });
+        if (opg.isOpg && opg.boundingBox) {
+          const box = opg.boundingBox;
+          const cropX = box.x * canvas.width;
+          const cropY = box.y * canvas.height;
+          const cropW = box.width * canvas.width;
+          const cropH = box.height * canvas.height;
+          
+          if (cropW > 50 && cropH > 50) {
+            const cropCanvas = document.createElement('canvas');
+            cropCanvas.width = cropW;
+            cropCanvas.height = cropH;
+            cropCanvas.getContext('2d')?.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+            finalUri = cropCanvas.toDataURL('image/jpeg', 0.9);
+          }
         }
-      } else {
-        // Fallback: If AI fails, proceed with full frame but notify user
-        toast({ title: "Analyzing Full View", description: "AI couldn't perfectly isolate the OPG, using whole frame." });
+      } catch (opgError) {
+        console.warn('OPG isolation failed, proceeding with full frame:', opgError);
       }
 
+      // Step 3: Final compression for primary analysis
       const highResCompressed = await compressImage(finalUri);
       setCurrentOriginalImage(highResCompressed);
       
+      // Step 4: Run primary clinical analysis
       startAnalysisTransition(async () => {
         await processImage(highResCompressed);
       });
+      
       stopLive();
     } catch (err: any) {
-      console.error('Capture error:', err);
-      toast({ variant: 'destructive', title: "Capture Error", description: "Failed to process the captured frame. Try again." });
+      console.error('Capture lifecycle error:', err);
+      toast({ variant: 'destructive', title: "Capture Error", description: "Failed to process the frame. Please try again." });
     } finally {
       setIsProcessingLive(false);
     }
@@ -336,10 +341,17 @@ export function DentalVisionClient() {
                 <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
                 {flash && <div className="absolute inset-0 bg-white z-50 animate-out fade-out duration-300" />}
                 
-                <div className="absolute inset-0 border-[40px] border-black/50 pointer-events-none">
-                  <div className="w-full h-full border-2 border-primary/50 rounded-xl relative">
-                    <div className="absolute top-1/2 left-0 right-0 h-px bg-primary/30" />
-                    <div className="absolute top-0 bottom-0 left-1/2 w-px bg-primary/30" />
+                {/* Visual Scanning Guide Overlay */}
+                <div className="absolute inset-0 border-[30px] border-black/40 pointer-events-none">
+                  <div className="w-full h-full border-2 border-primary/40 rounded-lg relative overflow-hidden">
+                    {/* Corner accents for the frame */}
+                    <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-primary rounded-tl-sm" />
+                    <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-primary rounded-tr-sm" />
+                    <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-primary rounded-bl-sm" />
+                    <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-primary rounded-br-sm" />
+                    
+                    {/* Scanning animation line */}
+                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-40 animate-scan" />
                   </div>
                 </div>
 
@@ -352,18 +364,21 @@ export function DentalVisionClient() {
                 )}
                 
                 {isProcessingLive && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm z-40">
-                    <Loader2 className="h-12 w-12 text-white animate-spin mb-4" />
-                    <p className="text-white text-xs font-black uppercase tracking-widest">Processing Image...</p>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm z-40">
+                    <div className="h-16 w-16 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4" />
+                    <p className="text-white text-xs font-black uppercase tracking-widest animate-pulse">Processing Frame...</p>
                   </div>
                 )}
               </div>
               <div className="p-4 bg-background">
-                <Button onClick={handleCapture} disabled={isProcessingLive || !isLiveActive || isAnalyzing} size="lg" className="w-full h-20 text-xl font-black rounded-2xl shadow-xl">
-                  {isProcessingLive || isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <Target className="mr-3 h-6 w-6" />}
+                <Button onClick={handleCapture} disabled={isProcessingLive || !isLiveActive || isAnalyzing} size="lg" className="w-full h-20 text-xl font-black rounded-2xl shadow-xl transition-all active:scale-95">
+                  {isProcessingLive || isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <Target className="mr-3 h-7 w-7" />}
                   CAPTURE & ANALYZE
                 </Button>
-                <p className="text-[10px] text-center mt-3 text-muted-foreground font-black uppercase tracking-widest">Center the panoramic jaw for best results</p>
+                <div className="flex items-center justify-center gap-2 mt-4 text-muted-foreground opacity-60">
+                  <Info className="h-3 w-3" />
+                  <p className="text-[10px] font-black uppercase tracking-widest">Hold steady for clinical-grade capture</p>
+                </div>
               </div>
               <canvas ref={canvasRef} className="hidden" />
             </CardContent>
