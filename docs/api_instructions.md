@@ -43,18 +43,25 @@ The body of the `POST` request must be a JSON object with the following structur
 
 - **`draw_boxes`** (Boolean):
   - When set to `true`, this instructs the API to return a new image with bounding boxes drawn around the detected areas of interest.
-  - If set to `false`, the API may return coordinate data instead of a processed image (this behavior would need to be tested).
 
 - **`image`** (String):
-  - This is the most critical part of the request. The image must be encoded as a **Base64 Data URI**.
-  - **Format**: The string must be prefixed with `data:<MIME_TYPE>;base64,`, where `<MIME_TYPE>` is the image type (e.g., `image/jpeg`, `image/png`).
-  - **Example**: `data:image/jpeg;base64,/9j/4AAQSk...`
+  - Must be a **Base64 Data URI**.
+  - **Format**: `data:<MIME_TYPE>;base64,...`
+
+---
+
+## Integration in DentalVision AR
+
+In this application, the API is integrated via a specialized Genkit flow:
+
+- **File**: `src/ai/flows/ai-radiograph-detection-flow.ts`
+- **Server Action**: `runAnalysis` in `src/app/actions.ts`
+
+The application automatically handles client-side image compression to ensure payloads remain within network limits and reduces latency.
 
 ---
 
 ## Successful Response Body (200 OK)
-
-If the request is successful, the API will respond with a JSON object containing the analysis results.
 
 ### Example Response:
 
@@ -81,20 +88,6 @@ If the request is successful, the API will respond with a JSON object containing
 
 ### Response Parameters:
 
-- **`report_html`** (String):
-  - An HTML string that contains a formatted summary report of the findings. This is not currently used in the web app but is available.
-
-- **`result_img`** (String):
-  - A Base64 Data URI of the processed image with bounding boxes drawn on it. This string can be used directly as the `src` for an `<img>` tag in HTML to display the result.
-
-- **`results_df`** (Array of Objects):
-  - The structured data of the findings. Each object in the array represents a type of issue found and contains:
-    - `disease` (String): The name of the finding (e.g., "decay", "Filling").
-    - `count` (Integer): The number of instances of this finding.
-    - `tooth_numbers` (Array of Strings): A list of the specific tooth numbers (using FDI notation) where the issue was detected.
-
-- **`success`** (Boolean):
-  - Will be `true` if the analysis was successful.
-
-- **`unique_id`** (String):
-  - A unique identifier for the analysis job.
+- **`result_img`**: Used to display the analyzed radiograph with clinical overlays.
+- **`results_df`**: Parsed into interactive badges and used as context for Gemini-powered clinical tutoring.
+- **`success`**: Boolean indicator of successful inference.
