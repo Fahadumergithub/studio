@@ -23,34 +23,50 @@ export async function runAnalysis(input: AiRadiographDetectionInput): Promise<An
   const validation = runAnalysisSchema.safeParse(input);
 
   if (!validation.success) {
-    return { success: false, error: 'Invalid input data.' };
+    return { success: false, error: 'Invalid image data format.' };
   }
 
-  if (!process.env.DENTAL_API_AUTH_TOKEN) {
-    console.error('DENTAL_API_AUTH_TOKEN is not set in environment variables.');
-    return { success: false, error: 'Server configuration error: Missing API token.' };
+  const token = process.env.DENTAL_API_AUTH_TOKEN;
+  if (!token) {
+    console.error('CRITICAL: DENTAL_API_AUTH_TOKEN is not set in environment variables.');
+    return { success: false, error: 'Server Configuration Error: The clinical analysis token is missing.' };
   }
 
   try {
+    console.log('Initiating radiograph analysis flow...');
     const result = await aiRadiographDetection(validation.data);
     return { success: true, data: result };
-  } catch (e) {
-    const error = e as Error;
-    console.error('Error during radiograph analysis:', error);
-    return { success: false, error: error.message };
+  } catch (e: any) {
+    console.error('Error during radiograph analysis:', e.message);
+    return { success: false, error: e.message || 'An unexpected error occurred during clinical analysis.' };
   }
 }
 
 export async function runOpgDetection(input: OpgDetectorInput): Promise<OpgDetectorOutput> {
-  return detectOpg(input);
+  try {
+    return await detectOpg(input);
+  } catch (e: any) {
+    console.error('Error in OPG detection flow:', e.message);
+    throw e;
+  }
 }
 
 export async function getClinicalInsights(input: RadiographTutorInput): Promise<RadiographTutorOutput> {
-  return radiographTutor(input);
+  try {
+    return await radiographTutor(input);
+  } catch (e: any) {
+    console.error('Error in clinical insights flow:', e.message);
+    throw e;
+  }
 }
 
 export async function getFindingLocations(input: LocateFindingsInput): Promise<LocateFindingsOutput> {
-  return locateFindings(input);
+  try {
+    return await locateFindings(input);
+  } catch (e: any) {
+    console.error('Error in finding locations flow:', e.message);
+    throw e;
+  }
 }
 
 const ResultItemSchema = z.object({
@@ -79,9 +95,8 @@ export async function getAnalysisSummary(input: AiAnalysisSummaryInput): Promise
   try {
     const result = await aiAnalysisSummary(validation.data);
     return { success: true, data: result };
-  } catch (e) {
-    const error = e as Error;
-    console.error('Error during summary generation:', error);
+  } catch (e: any) {
+    console.error('Error during summary generation:', e.message);
     return { success: false, error: 'Failed to generate summary.' };
   }
 }
