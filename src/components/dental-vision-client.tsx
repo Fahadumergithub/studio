@@ -44,7 +44,11 @@ export function DentalVisionClient() {
       try {
         // First, try for the environment-facing camera (ideal for radiographs)
         const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: { ideal: 'environment' } } 
+          video: { 
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          } 
         });
         
         streamRef.current = stream;
@@ -93,37 +97,59 @@ export function DentalVisionClient() {
     setProcessedWebcamImage(null);
     
     intervalRef.current = setInterval(async () => {
-      if (videoRef.current && canvasRef.current) {
+      if (videoRef.current && canvasRef.current && isLiveAnalyzing) {
         const video = videoRef.current;
         const canvas = canvasRef.current;
         
-        // Ensure video is ready and has dimensions to avoid "Invalid input data" errors
-        if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+        // Detailed check for video readiness
+        if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0 || video.paused) {
             return; 
         }
 
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        // Limit capture resolution to prevent API 500 errors due to large payloads
+        const MAX_DIMENSION = 1024;
+        let width = video.videoWidth;
+        let height = video.videoHeight;
+
+        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+          if (width > height) {
+            height = (MAX_DIMENSION / width) * height;
+            width = MAX_DIMENSION;
+          } else {
+            width = (MAX_DIMENSION / height) * width;
+            height = MAX_DIMENSION;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
         const context = canvas.getContext('2d');
         if (context) {
-          context.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const dataUri = canvas.toDataURL('image/jpeg', 0.8);
+          try {
+            context.drawImage(video, 0, 0, width, height);
+            // Use slightly lower quality to keep payload small
+            const dataUri = canvas.toDataURL('image/jpeg', 0.7);
 
-          const result = await runAnalysis({ radiographDataUri: dataUri });
-          if (result.success) {
-            setProcessedWebcamImage(result.data.processedImage);
-          } else {
-            console.error("Live analysis frame failed:", result.error);
+            // Directly call the action without transition for speed in live view
+            const result = await runAnalysis({ radiographDataUri: dataUri });
+            if (result.success) {
+              setProcessedWebcamImage(result.data.processedImage);
+            } else {
+              console.error("Live analysis frame failed:", result.error);
+            }
+          } catch (e) {
+            console.error("Canvas draw/capture failed:", e);
           }
         }
       }
-    }, 2500); // Analyzed every 2.5 seconds to balance responsiveness and API load
+    }, 3000); // Increased to 3 seconds to be safer with API processing time
   };
 
   const stopLiveAnalysis = () => {
     setIsLiveAnalyzing(false);
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
+      intervalRef.current = null;
     }
     setProcessedWebcamImage(null);
   };
