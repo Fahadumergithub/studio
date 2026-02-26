@@ -46,25 +46,23 @@ export function DentalVisionClient() {
     return () => stopLive();
   }, []);
 
-  const compressImage = (dataUri: string): Promise<string> => {
+  const compressImage = (dataUri: string, maxDim: number = 1200): Promise<string> => {
     return new Promise((resolve) => {
       const img = new window.Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 1200; 
-        const MAX_HEIGHT = 1200;
         let width = img.width;
         let height = img.height;
 
         if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
+          if (width > maxDim) {
+            height *= maxDim / width;
+            width = maxDim;
           }
         } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
+          if (height > maxDim) {
+            width *= maxDim / height;
+            height = maxDim;
           }
         }
         canvas.width = width;
@@ -80,7 +78,7 @@ export function DentalVisionClient() {
   const initCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 } }
+        video: { facingMode: 'environment', width: { ideal: 1920 } }
       });
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
@@ -107,7 +105,8 @@ export function DentalVisionClient() {
     setIsAiRateLimited(false);
 
     try {
-      const compressedUri = await compressImage(dataUri);
+      // Ensure the image sent to the API is within safe payload limits for mobile
+      const compressedUri = await compressImage(dataUri, 1200);
       const result = await runAnalysis({ radiographDataUri: compressedUri });
       
       if (result.success) {
@@ -136,7 +135,10 @@ export function DentalVisionClient() {
         toast({ variant: 'destructive', title: "Analysis Failed", description: result.error });
       }
     } catch (e: any) {
-      toast({ variant: 'destructive', title: "System Error", description: e.message || "A communication error occurred." });
+      const errorMsg = e.message?.toLowerCase().includes('failed') 
+        ? "Connection timeout. Please ensure you have a stable network." 
+        : (e.message || "A communication error occurred.");
+      toast({ variant: 'destructive', title: "System Error", description: errorMsg });
     }
   };
 
@@ -148,14 +150,20 @@ export function DentalVisionClient() {
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
+    
+    // Capture high-res source
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    canvas.getContext('2d')?.drawImage(video, 0, 0);
-    const rawUri = canvas.toDataURL('image/jpeg', 0.85);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0);
+    
+    const rawUri = canvas.toDataURL('image/jpeg', 0.95);
     
     setIsProcessingLive(true);
     try {
-      const compressedForDetection = await compressImage(rawUri);
+      // Step 1: Low-res thumbnail for isolation detection (fast, saves quota/timeout)
+      const compressedForDetection = await compressImage(rawUri, 600);
       
       let finalUri = rawUri;
       try {
@@ -176,20 +184,21 @@ export function DentalVisionClient() {
           }
         }
       } catch (opgError) {
-        console.warn('Strict isolation failed, using full frame:', opgError);
+        console.warn('Isolation failed, falling back to full frame:', opgError);
       }
 
-      const highResCompressed = await compressImage(finalUri);
-      setCurrentOriginalImage(highResCompressed);
+      // Final compression for analysis
+      const clinicalReadyUri = await compressImage(finalUri, 1200);
+      setCurrentOriginalImage(clinicalReadyUri);
       
       startAnalysisTransition(async () => {
-        await processImage(highResCompressed);
+        await processImage(clinicalReadyUri);
       });
       
       stopLive();
     } catch (err: any) {
       console.error('Capture lifecycle error:', err);
-      toast({ variant: 'destructive', title: "Capture Error", description: "Unable to process the frame." });
+      toast({ variant: 'destructive', title: "Capture Error", description: "Connection interrupted or frame too large." });
     } finally {
       setIsProcessingLive(false);
     }
