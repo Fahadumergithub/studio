@@ -95,7 +95,7 @@ export function DentalVisionClient() {
       setTimeout(() => setFlash(false), 150);
     }
 
-    // Increased resolution for better dental detection accuracy
+    // High resolution for detection accuracy
     const MAX_DIMENSION = 1280;
     let width = video.videoWidth;
     let height = video.videoHeight;
@@ -267,39 +267,39 @@ export function DentalVisionClient() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4 sm:space-y-8 max-w-4xl mx-auto">
       <Tabs defaultValue="upload" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="upload" onClick={stopLiveAnalysis}>
+        <TabsList className="grid w-full grid-cols-2 mb-4">
+          <TabsTrigger value="upload" onClick={stopLiveAnalysis} className="py-2.5">
             <Upload className="mr-2 h-4 w-4" />Upload
           </TabsTrigger>
-          <TabsTrigger value="live">
+          <TabsTrigger value="live" className="py-2.5">
             <Camera className="mr-2 h-4 w-4" />Live AR
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="upload">
-          <Card>
-            <CardContent className="p-6">
-              <div className="grid md:grid-cols-2 gap-8 items-start">
+        <TabsContent value="upload" className="mt-0">
+          <Card className="border-none sm:border shadow-md">
+            <CardContent className="p-4 sm:p-6">
+              <div className="grid md:grid-cols-2 gap-6 sm:gap-8 items-start">
                 <div className="space-y-4">
-                  <h2 className="text-2xl font-semibold text-primary/90 flex items-center gap-2">
-                    <ScanLine className="size-6" />
+                  <h2 className="text-xl sm:text-2xl font-semibold text-primary/90 flex items-center gap-2">
+                    <ScanLine className="size-5 sm:size-6" />
                     1. Upload OPG
                   </h2>
                   {originalImage ? (
-                    <div className="relative group">
+                    <div className="relative group overflow-hidden rounded-lg">
                       <Image
                         src={originalImage}
                         alt="Uploaded OPG"
                         width={600}
                         height={400}
-                        className="rounded-lg object-contain w-full border bg-muted/20"
+                        className="object-contain w-full border bg-muted/20 max-h-[300px] sm:max-h-none"
                       />
                       <Button
                         variant="destructive"
                         size="icon"
-                        className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity rounded-full h-8 w-8"
+                        className="absolute top-2 right-2 rounded-full h-8 w-8 shadow-lg"
                         onClick={clearImage}
                       >
                         <X className="size-4" />
@@ -308,11 +308,11 @@ export function DentalVisionClient() {
                   ) : (
                     <div
                       onClick={() => fileInputRef.current?.click()}
-                      className="flex flex-col items-center justify-center p-10 border-2 border-dashed rounded-lg cursor-pointer hover:bg-accent/50 transition-colors aspect-video border-border"
+                      className="flex flex-col items-center justify-center p-6 sm:p-10 border-2 border-dashed rounded-lg cursor-pointer hover:bg-accent/50 transition-colors aspect-video border-border"
                     >
-                      <Upload className="size-12 text-muted-foreground mb-4" />
-                      <p className="text-muted-foreground text-center">
-                        <span className="font-semibold text-primary">Click to upload</span> OPG radiograph
+                      <Upload className="size-10 sm:size-12 text-muted-foreground mb-3" />
+                      <p className="text-muted-foreground text-center text-sm sm:text-base">
+                        <span className="font-semibold text-primary">Tap to upload</span> OPG radiograph
                       </p>
                       <input
                         ref={fileInputRef}
@@ -323,17 +323,17 @@ export function DentalVisionClient() {
                       />
                     </div>
                   )}
-                  <Button onClick={handleAnalyze} disabled={!originalImage || isAnalyzing} className="w-full" size="lg">
+                  <Button onClick={handleAnalyze} disabled={!originalImage || isAnalyzing} className="w-full h-12 text-base" size="lg">
                     {isAnalyzing ? 'Processing...' : 'Run AI Analysis'}
                   </Button>
                 </div>
 
                 <div className="space-y-4">
-                  <h2 className="text-2xl font-semibold text-primary/90 flex items-center gap-2">
-                    <Bot className="size-6" />
+                  <h2 className="text-xl sm:text-2xl font-semibold text-primary/90 flex items-center gap-2">
+                    <Bot className="size-5 sm:size-6" />
                     2. AI Findings
                   </h2>
-                  <div className="aspect-video w-full rounded-lg border bg-muted/30 flex items-center justify-center p-4 relative overflow-hidden">
+                  <div className="aspect-video w-full rounded-lg border bg-muted/30 flex items-center justify-center p-2 sm:p-4 relative overflow-hidden min-h-[200px]">
                     {isAnalyzing ? (
                       <Skeleton className="w-full h-full" />
                     ) : processedImage ? (
@@ -342,22 +342,22 @@ export function DentalVisionClient() {
                         alt="Analyzed OPG"
                         width={600}
                         height={400}
-                        className="rounded-lg object-contain w-full"
+                        className="rounded-lg object-contain w-full max-h-[300px] sm:max-h-none"
                       />
                     ) : (
                       <div className="text-center text-muted-foreground p-4">
-                        <Eye className="mx-auto size-12 mb-4" />
-                        <p>Analysis results will appear here.</p>
+                        <Eye className="mx-auto size-10 sm:size-12 mb-3 opacity-40" />
+                        <p className="text-sm">Analysis results will appear here.</p>
                       </div>
                     )}
                   </div>
                   {analysisSummary && (
-                    <Card className="bg-muted/30">
-                      <CardContent className="p-4">
-                        <h3 className="text-sm font-semibold mb-2 flex items-center gap-1">
-                          <Info className="h-4 w-4" /> Summary
+                    <Card className="bg-muted/30 border-none shadow-none">
+                      <CardContent className="p-3 sm:p-4">
+                        <h3 className="text-xs font-bold mb-2 flex items-center gap-1 text-primary/70 uppercase tracking-widest">
+                          <Info className="h-3 w-3" /> Summary
                         </h3>
-                        <p className="text-sm text-foreground whitespace-pre-wrap">{analysisSummary}</p>
+                        <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{analysisSummary}</p>
                       </CardContent>
                     </Card>
                   )}
@@ -367,27 +367,27 @@ export function DentalVisionClient() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="live">
-          <Card>
-            <CardContent className="p-6">
-               <div className="space-y-6">
+        <TabsContent value="live" className="mt-0">
+          <Card className="border-none sm:border shadow-md">
+            <CardContent className="p-3 sm:p-6">
+               <div className="space-y-4 sm:space-y-6">
                   <div className="flex items-center justify-between">
-                    <h2 className="text-2xl font-semibold text-primary/90 flex items-center gap-2">
-                      <Camera className="size-6" />
-                      Intelligent Live AR
+                    <h2 className="text-xl sm:text-2xl font-semibold text-primary/90 flex items-center gap-2">
+                      <Camera className="size-5 sm:size-6" />
+                      Live AR Session
                     </h2>
                     <div className="flex items-center gap-2">
-                      <div className="text-[10px] text-muted-foreground bg-accent px-2 py-1 rounded-full flex items-center gap-1 min-w-[120px] justify-center uppercase font-bold tracking-tight">
+                      <div className="text-[10px] text-muted-foreground bg-accent px-2 py-1 rounded-full flex items-center gap-1 uppercase font-bold tracking-tight">
                         {isCheckingOpg ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                        {isCheckingOpg ? 'Analyzing...' : 'Auto-Detector Ready'}
+                        {isCheckingOpg ? 'Analyzing...' : 'Ready'}
                       </div>
                     </div>
                   </div>
                   
-                  <div className="relative w-full aspect-video bg-black rounded-lg border flex items-center justify-center overflow-hidden shadow-inner">
+                  <div className="relative w-full aspect-[4/3] sm:aspect-video bg-black rounded-xl border flex items-center justify-center overflow-hidden shadow-2xl">
                     <video 
                       ref={videoRef} 
-                      className="w-full h-full object-contain" 
+                      className="w-full h-full object-cover sm:object-contain" 
                       autoPlay 
                       muted 
                       playsInline 
@@ -397,11 +397,11 @@ export function DentalVisionClient() {
 
                     {!processedWebcamImage && isLiveAnalyzing && (
                       <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                        <div className="w-[85%] h-[75%] border-2 border-primary/30 rounded-2xl flex items-center justify-center bg-primary/5">
-                          <div className="absolute top-1/2 left-0 right-0 h-px bg-primary/10" />
-                          <div className="absolute top-0 bottom-0 left-1/2 w-px bg-primary/10" />
-                          <div className="absolute -top-7 text-primary/70 text-[10px] uppercase font-black tracking-[0.2em] bg-background/80 px-3 py-1.5 rounded-full border shadow-sm">
-                            Align OPG Radiograph
+                        <div className="w-[90%] h-[70%] sm:w-[85%] sm:h-[75%] border-2 border-primary/40 rounded-2xl flex items-center justify-center bg-primary/5">
+                          <div className="absolute top-1/2 left-0 right-0 h-px bg-primary/20" />
+                          <div className="absolute top-0 bottom-0 left-1/2 w-px bg-primary/20" />
+                          <div className="absolute -top-4 text-primary text-[9px] uppercase font-black tracking-[0.2em] bg-background/90 px-3 py-1.5 rounded-full border shadow-sm">
+                            Center OPG Frame
                           </div>
                         </div>
                       </div>
@@ -419,77 +419,77 @@ export function DentalVisionClient() {
                     )}
 
                     {hasCameraPermission === false && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95 text-white p-4 z-20">
-                        <VideoOff className="size-12 mb-4 text-destructive"/>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/95 text-white p-6 z-20">
+                        <VideoOff className="size-10 mb-4 text-destructive"/>
                         <p className="text-lg font-semibold">Camera Access Required</p>
-                        <p className="text-sm text-muted-foreground text-center max-w-[250px] mt-2">
-                          Please enable camera permissions in your browser settings to use live AR features.
+                        <p className="text-sm text-muted-foreground text-center mt-2">
+                          Please enable camera permissions in your settings.
                         </p>
-                        <Button variant="outline" className="mt-6" onClick={() => initCamera()}>
+                        <Button variant="outline" className="mt-6 border-white/20 text-white hover:bg-white/10" onClick={() => initCamera()}>
                           Retry Permission
                         </Button>
                       </div>
                     )}
 
                     {isLiveAnalyzing && (
-                      <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/60 text-white py-2 px-3.5 rounded-full text-[10px] font-bold uppercase tracking-widest z-20 backdrop-blur-md border border-white/10 shadow-xl">
+                      <div className="absolute top-3 left-3 sm:top-4 sm:left-4 flex items-center gap-2 bg-black/70 text-white py-1.5 px-3 rounded-full text-[9px] sm:text-[10px] font-bold uppercase tracking-widest z-20 backdrop-blur-md border border-white/10 shadow-xl">
                         <div className={cn(
-                          "w-2.5 h-2.5 rounded-full shadow-[0_0_8px]",
+                          "w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full shadow-[0_0_8px]",
                           processedWebcamImage ? "bg-green-500 shadow-green-500/50" : (isCheckingOpg ? "bg-blue-500 animate-pulse shadow-blue-500/50" : "bg-yellow-500 shadow-yellow-500/50")
                         )} />
-                        {processedWebcamImage ? "Clinical Overlay Active" : (isCheckingOpg ? "Analyzing Frame..." : "Scanning for OPG...")}
+                        {processedWebcamImage ? "Analysis Live" : (isCheckingOpg ? "Processing..." : "Scanning...")}
                       </div>
                     )}
                   </div>
 
                   <canvas ref={canvasRef} className="hidden" />
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-3">
                     {!isLiveAnalyzing ? (
                       <Button 
                         onClick={startLiveAnalysis} 
-                        className="w-full h-14 shadow-lg hover:shadow-xl transition-all sm:col-span-2 text-base font-semibold" 
+                        className="w-full h-14 sm:h-16 shadow-lg text-base sm:text-lg font-bold rounded-xl" 
                         size="lg"
                       >
-                        <Video className="mr-2 h-5 w-5"/>
+                        <Video className="mr-2 h-6 w-6"/>
                         Launch AR Clinical Session
                       </Button>
                     ) : (
-                      <>
+                      <div className="grid grid-cols-2 gap-3">
                         <Button 
                           onClick={() => captureAndAnalyze(true)} 
-                          className="h-14 bg-primary hover:bg-primary/90 text-base font-semibold shadow-lg" 
+                          className="h-14 sm:h-16 bg-primary hover:bg-primary/90 text-sm sm:text-base font-bold shadow-lg rounded-xl" 
                           size="lg"
                           disabled={isCheckingOpg}
                         >
                           <Target className="mr-2 h-5 w-5"/>
-                          Capture & Analyze
+                          Capture
                         </Button>
                         <Button 
                           onClick={stopLiveAnalysis} 
-                          className="h-14 text-base font-semibold shadow-md" 
+                          className="h-14 sm:h-16 text-sm sm:text-base font-bold shadow-md rounded-xl" 
                           size="lg" 
                           variant="destructive"
                         >
                           <VideoOff className="mr-2 h-5 w-5"/>
                           End Session
                         </Button>
-                      </>
+                      </div>
                     )}
                   </div>
 
                   {liveResults && liveResults.length > 0 && (
-                    <Card className="bg-primary/5 border-primary/20 animate-in slide-in-from-bottom-2 duration-300">
-                      <CardContent className="p-4">
-                        <h3 className="text-xs font-black uppercase tracking-[0.2em] text-primary/70 mb-3 flex items-center gap-2">
-                          <ListChecks className="h-4 w-4" /> Live Analysis Results
+                    <Card className="bg-primary/5 border-primary/20 animate-in slide-in-from-bottom-2 duration-300 shadow-sm">
+                      <CardContent className="p-3 sm:p-4">
+                        <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-primary/70 mb-3 flex items-center gap-2">
+                          <ListChecks className="h-4 w-4" /> Live Results
                         </h3>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-1.5 sm:gap-2">
                           {liveResults.map((finding, idx) => (
-                            <Badge key={idx} variant="outline" className="bg-background/80 py-1.5 px-3 border-primary/20 flex items-center gap-2">
+                            <Badge key={idx} variant="outline" className="bg-background/90 py-1 sm:py-1.5 px-2 sm:px-3 border-primary/20 flex items-center gap-1.5 shadow-sm text-[10px] sm:text-xs">
                               <span className="font-bold text-primary">{finding.disease}</span>
-                              <span className="text-muted-foreground">({finding.count})</span>
-                              <span className="text-[10px] text-primary/60">Teeth: {finding.tooth_numbers.join(', ')}</span>
+                              <span className="text-muted-foreground font-medium">{finding.count}x</span>
+                              <span className="text-primary/50 font-mono">Teeth: {finding.tooth_numbers.join(', ')}</span>
                             </Badge>
                           ))}
                         </div>
@@ -497,12 +497,12 @@ export function DentalVisionClient() {
                     </Card>
                   )}
 
-                  <div className="flex flex-col gap-2 items-center">
-                    <p className="text-[10px] text-center text-muted-foreground uppercase tracking-[0.3em] font-black opacity-60">
-                      Intelligent Radiograph Isolation
+                  <div className="flex flex-col gap-1.5 items-center">
+                    <p className="text-[9px] text-center text-muted-foreground uppercase tracking-[0.3em] font-black opacity-60">
+                      Smart Radiograph Alignment
                     </p>
-                    <p className="text-[10px] text-center text-muted-foreground/60 leading-relaxed max-w-md">
-                      The AI automatically detects, aligns, and crops panoramic x-rays. If auto-detection is slow due to screen glare, use the <strong>Capture & Analyze</strong> button for manual processing.
+                    <p className="text-[9px] text-center text-muted-foreground/60 leading-relaxed max-w-xs px-4">
+                      Position the panoramic X-ray within the scanning frame. AI automatically crops and analyzes findings.
                     </p>
                   </div>
                </div>
@@ -511,8 +511,8 @@ export function DentalVisionClient() {
         </TabsContent>
       </Tabs>
       
-      <div className="text-center text-[10px] text-muted-foreground pb-8 uppercase tracking-tighter opacity-50">
-        <p>Experimental Prototype • Clinical Verification Required • Not for Diagnostics</p>
+      <div className="text-center text-[9px] text-muted-foreground py-4 uppercase tracking-tighter opacity-40">
+        <p>Experimental Prototype • Clinical Verification Required</p>
       </div>
     </div>
   );
