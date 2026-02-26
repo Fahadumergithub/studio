@@ -143,7 +143,7 @@ export function DentalVisionClient() {
   const handleCapture = async () => {
     if (!videoRef.current || !canvasRef.current) return;
     
-    // Trigger visual flash feedback
+    // Visual Feedback: Flash effect
     setFlash(true);
     setTimeout(() => setFlash(false), 150);
 
@@ -156,10 +156,10 @@ export function DentalVisionClient() {
     
     setIsProcessingLive(true);
     try {
-      // Step 1: Attempt to compress for OPG detection
+      // Step 1: Compress for isolation attempt
       const compressedForDetection = await compressImage(rawUri);
       
-      // Step 2: Try OPG detection, but fall back silently if it fails (e.g. rate limit)
+      // Step 2: OPG Isolation (permisssive/resilient)
       let finalUri = rawUri;
       try {
         const opg = await runOpgDetection({ imageDataUri: compressedForDetection });
@@ -170,6 +170,7 @@ export function DentalVisionClient() {
           const cropW = box.width * canvas.width;
           const cropH = box.height * canvas.height;
           
+          // Only crop if the box is reasonably sized
           if (cropW > 50 && cropH > 50) {
             const cropCanvas = document.createElement('canvas');
             cropCanvas.width = cropW;
@@ -179,14 +180,13 @@ export function DentalVisionClient() {
           }
         }
       } catch (opgError) {
-        console.warn('OPG isolation failed, proceeding with full frame:', opgError);
+        console.warn('Isolation failed, using full frame:', opgError);
       }
 
-      // Step 3: Final compression for primary analysis
+      // Step 3: Clinical Analysis
       const highResCompressed = await compressImage(finalUri);
       setCurrentOriginalImage(highResCompressed);
       
-      // Step 4: Run primary clinical analysis
       startAnalysisTransition(async () => {
         await processImage(highResCompressed);
       });
@@ -194,7 +194,7 @@ export function DentalVisionClient() {
       stopLive();
     } catch (err: any) {
       console.error('Capture lifecycle error:', err);
-      toast({ variant: 'destructive', title: "Capture Error", description: "Failed to process the frame. Please try again." });
+      toast({ variant: 'destructive', title: "Capture Error", description: "Unable to process the frame." });
     } finally {
       setIsProcessingLive(false);
     }
@@ -204,7 +204,7 @@ export function DentalVisionClient() {
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 10 * 1024 * 1024) {
-        toast({ variant: 'destructive', title: "File Too Large", description: "Please upload an image smaller than 10MB." });
+        toast({ variant: 'destructive', title: "File Too Large", description: "Max file size is 10MB." });
         return;
       }
       const reader = new FileReader();
@@ -339,9 +339,11 @@ export function DentalVisionClient() {
             <CardContent className="p-0">
               <div className="relative aspect-[4/3] sm:aspect-video bg-black flex items-center justify-center overflow-hidden">
                 <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+                
+                {/* Visual Feedback Flash */}
                 {flash && <div className="absolute inset-0 bg-white z-50 animate-out fade-out duration-300" />}
                 
-                {/* Visual Scanning Guide Overlay */}
+                {/* Clinical Scanning Guide Overlay */}
                 <div className="absolute inset-0 border-[30px] border-black/40 pointer-events-none">
                   <div className="w-full h-full border-2 border-primary/40 rounded-lg relative overflow-hidden">
                     {/* Corner accents for the frame */}
@@ -377,7 +379,7 @@ export function DentalVisionClient() {
                 </Button>
                 <div className="flex items-center justify-center gap-2 mt-4 text-muted-foreground opacity-60">
                   <Info className="h-3 w-3" />
-                  <p className="text-[10px] font-black uppercase tracking-widest">Hold steady for clinical-grade capture</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest">Center jaw for clinical isolation</p>
                 </div>
               </div>
               <canvas ref={canvasRef} className="hidden" />
