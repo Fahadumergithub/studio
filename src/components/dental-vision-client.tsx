@@ -51,8 +51,8 @@ export function DentalVisionClient() {
       const img = new window.Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 1000; // Slightly smaller for better API performance
-        const MAX_HEIGHT = 1000;
+        const MAX_WIDTH = 1200; 
+        const MAX_HEIGHT = 1200;
         let width = img.width;
         let height = img.height;
 
@@ -71,7 +71,7 @@ export function DentalVisionClient() {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.75));
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
       };
       img.src = dataUri;
     });
@@ -114,7 +114,6 @@ export function DentalVisionClient() {
         setCurrentProcessedImage(result.data.processedImage);
         setCurrentResults(result.data.results);
         
-        // Optional AI Enhancements (handled gracefully if rate limited)
         try {
           const [insights, locationData] = await Promise.all([
             getClinicalInsights({ originalImageDataUri: compressedUri, detections: result.data.results }),
@@ -123,13 +122,11 @@ export function DentalVisionClient() {
           
           if (!insights || !locationData) {
              setIsAiRateLimited(true);
-             toast({ title: "AI Busy", description: "Clinical tutoring is currently cooling down due to high usage." });
           } else {
             setClinicalInsights(insights);
             setHotspots(locationData.hotspots);
           }
         } catch (genAiError) {
-          console.warn('GenAI assistance failed (possibly rate limited):', genAiError);
           setIsAiRateLimited(true);
         }
         
@@ -139,12 +136,7 @@ export function DentalVisionClient() {
         toast({ variant: 'destructive', title: "Analysis Failed", description: result.error });
       }
     } catch (e: any) {
-      console.error('System communication error:', e);
-      toast({ 
-        variant: 'destructive', 
-        title: "System Error", 
-        description: e.message || "A communication error occurred. Please check your network." 
-      });
+      toast({ variant: 'destructive', title: "System Error", description: e.message || "A communication error occurred." });
     }
   };
 
@@ -162,7 +154,12 @@ export function DentalVisionClient() {
     
     setIsProcessingLive(true);
     try {
-      const opg = await runOpgDetection({ imageDataUri: rawUri });
+      // Compress for AI detection to avoid payload limits
+      const compressedForDetection = await compressImage(rawUri);
+      const opg = await runOpgDetection({ imageDataUri: compressedForDetection });
+      
+      let finalUri = rawUri;
+
       if (opg.isOpg && opg.boundingBox) {
         const box = opg.boundingBox;
         const cropX = box.x * canvas.width;
@@ -170,23 +167,29 @@ export function DentalVisionClient() {
         const cropW = box.width * canvas.width;
         const cropH = box.height * canvas.height;
         
-        const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = cropW;
-        cropCanvas.height = cropH;
-        cropCanvas.getContext('2d')?.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-        
-        const croppedUri = cropCanvas.toDataURL('image/jpeg', 0.9);
-        setCurrentOriginalImage(croppedUri);
-        
-        startAnalysisTransition(async () => {
-          await processImage(croppedUri);
-        });
-        stopLive();
+        // Safety check for crop dimensions
+        if (cropW > 50 && cropH > 50) {
+          const cropCanvas = document.createElement('canvas');
+          cropCanvas.width = cropW;
+          cropCanvas.height = cropH;
+          cropCanvas.getContext('2d')?.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+          finalUri = cropCanvas.toDataURL('image/jpeg', 0.9);
+        }
       } else {
-        toast({ title: "No X-Ray Identified", description: "Ensure the panoramic radiograph is clear and centered." });
+        // Fallback: If AI fails, proceed with full frame but notify user
+        toast({ title: "Analyzing Full View", description: "AI couldn't perfectly isolate the OPG, using whole frame." });
       }
+
+      const highResCompressed = await compressImage(finalUri);
+      setCurrentOriginalImage(highResCompressed);
+      
+      startAnalysisTransition(async () => {
+        await processImage(highResCompressed);
+      });
+      stopLive();
     } catch (err: any) {
-      toast({ variant: 'destructive', title: "Detection Error", description: "Failed to identify the radiograph." });
+      console.error('Capture error:', err);
+      toast({ variant: 'destructive', title: "Capture Error", description: "Failed to process the captured frame. Try again." });
     } finally {
       setIsProcessingLive(false);
     }
@@ -351,7 +354,7 @@ export function DentalVisionClient() {
                 {isProcessingLive && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm z-40">
                     <Loader2 className="h-12 w-12 text-white animate-spin mb-4" />
-                    <p className="text-white text-xs font-black uppercase tracking-widest">Identifying X-Ray...</p>
+                    <p className="text-white text-xs font-black uppercase tracking-widest">Processing Image...</p>
                   </div>
                 )}
               </div>
@@ -360,6 +363,7 @@ export function DentalVisionClient() {
                   {isProcessingLive || isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <Target className="mr-3 h-6 w-6" />}
                   CAPTURE & ANALYZE
                 </Button>
+                <p className="text-[10px] text-center mt-3 text-muted-foreground font-black uppercase tracking-widest">Center the panoramic jaw for best results</p>
               </div>
               <canvas ref={canvasRef} className="hidden" />
             </CardContent>
@@ -375,7 +379,7 @@ export function DentalVisionClient() {
                     <h3 className="text-[10px] font-black uppercase text-primary tracking-widest flex items-center gap-2">
                       <Eye className="h-4 w-4" /> Clinical Review
                     </h3>
-                    {hotspots && <Badge variant="outline" className="text-[9px] font-black">TAP HOTSPOTS</Badge>}
+                    {hotspots && <Badge variant="outline" className="text-[9px] font-black">TAP FINDINGS</Badge>}
                   </div>
                   <div className="relative aspect-[16/10] bg-black">
                     {currentProcessedImage && (
@@ -507,7 +511,7 @@ export function DentalVisionClient() {
       </Tabs>
 
       <footer className="text-center py-10 opacity-20">
-        <p className="text-[10px] uppercase font-black tracking-widest">DentalVision Clinical Systems</p>
+        <p className="text-[10px] uppercase font-black tracking-widest">DentalVision AR Systems</p>
       </footer>
     </div>
   );

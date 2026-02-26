@@ -46,12 +46,9 @@ export async function runOpgDetection(input: OpgDetectorInput): Promise<OpgDetec
   try {
     return await detectOpg(input);
   } catch (e: any) {
-    console.error('Error in OPG detection flow:', e.message);
-    // If rate limited, return a fallback object
-    if (e.message?.includes('429') || e.message?.includes('RESOURCE_EXHAUSTED')) {
-      return { isOpg: false, confidence: 0 };
-    }
-    throw e;
+    console.warn('OPG detection failed (likely rate limit or connection):', e.message);
+    // Return a safe fallback instead of throwing to prevent UI blocking
+    return { isOpg: false, confidence: 0 };
   }
 }
 
