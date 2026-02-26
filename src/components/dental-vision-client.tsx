@@ -99,7 +99,7 @@ export function DentalVisionClient() {
     }
   };
 
-  const processImage = async (dataUri: string, autoNav: boolean = true) => {
+  const processImage = async (dataUri: string, autoNav: boolean = true, originalFallbackUri?: string) => {
     setCurrentProcessedImage(null);
     setCurrentResults(null);
     setClinicalInsights(null);
@@ -109,8 +109,15 @@ export function DentalVisionClient() {
 
     try {
       const compressedUri = await compressImage(dataUri, 1200);
-      const result = await runAnalysis({ radiographDataUri: compressedUri });
+      let result = await runAnalysis({ radiographDataUri: compressedUri });
       
+      // Zero-Failure Fallback: If crop results in a server error, try the original full frame
+      if (!result.success && originalFallbackUri) {
+        console.warn('Analysis of isolated frame failed, retrying with full frame fallback...');
+        const compressedFallback = await compressImage(originalFallbackUri, 1200);
+        result = await runAnalysis({ radiographDataUri: compressedFallback });
+      }
+
       if (result.success) {
         setCurrentProcessedImage(result.data.processedImage);
         setCurrentResults(result.data.results);
@@ -182,22 +189,19 @@ export function DentalVisionClient() {
           // Sanitization: Ensure coordinates are within 0-1 range
           const sx = Math.max(0, Math.min(1, x));
           const sy = Math.max(0, Math.min(1, y));
-          const sw = Math.max(0, Math.min(1 - sx, width));
-          const sh = Math.max(0, Math.min(1 - sy, height));
+          const sw = Math.max(0.1, Math.min(1 - sx, width));
+          const sh = Math.max(0.1, Math.min(1 - sy, height));
           
-          // Only crop if the identified area is significant (at least 10% of frame)
-          if (sw > 0.1 && sh > 0.1) {
-            const cropX = sx * canvas.width;
-            const cropY = sy * canvas.height;
-            const cropW = sw * canvas.width;
-            const cropH = sh * canvas.height;
-            
-            const cropCanvas = document.createElement('canvas');
-            cropCanvas.width = cropW;
-            cropCanvas.height = cropH;
-            cropCanvas.getContext('2d')?.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-            finalUri = cropCanvas.toDataURL('image/jpeg', 0.95);
-          }
+          const cropX = sx * canvas.width;
+          const cropY = sy * canvas.height;
+          const cropW = sw * canvas.width;
+          const cropH = sh * canvas.height;
+          
+          const cropCanvas = document.createElement('canvas');
+          cropCanvas.width = cropW;
+          cropCanvas.height = cropH;
+          cropCanvas.getContext('2d')?.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+          finalUri = cropCanvas.toDataURL('image/jpeg', 0.95);
         }
       } catch (opgError) {
         console.warn('Isolation failed, falling back to full frame:', opgError);
@@ -207,7 +211,8 @@ export function DentalVisionClient() {
       setCurrentOriginalImage(clinicalReadyUri);
       
       startAnalysisTransition(async () => {
-        await processImage(clinicalReadyUri, false);
+        // Pass the raw original as a fallback if the isolated one fails
+        await processImage(clinicalReadyUri, false, rawUri);
       });
       
       stopLive();
@@ -373,8 +378,10 @@ export function DentalVisionClient() {
                   </>
                 ) : (
                   currentProcessedImage && (
-                    <div className="relative w-full h-full animate-in zoom-in-95 duration-500">
-                      <Image src={currentProcessedImage} alt="AR Findings" fill className="object-contain" />
+                    <div className="relative w-full h-full animate-in zoom-in-95 duration-500 bg-black flex items-center justify-center">
+                      <div className="relative w-full aspect-video">
+                        <Image src={currentProcessedImage} alt="AR Findings" fill className="object-contain" />
+                      </div>
                     </div>
                   )
                 )}
