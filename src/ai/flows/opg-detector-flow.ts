@@ -21,7 +21,7 @@ const OpgDetectorOutputSchema = z.object({
   confidence: z.number().describe('Confidence score from 0 to 1.'),
   boundingBox: z.object({
     x: z.number().describe('Normalized x-coordinate of the top-left corner (0.0 to 1.0).'),
-    y: z.number().describe('Normalized x-coordinate of the top-left corner (0.0 to 1.0).'),
+    y: z.number().describe('Normalized y-coordinate of the top-left corner (0.0 to 1.0).'),
     width: z.number().describe('Normalized width (0.0 to 1.0).'),
     height: z.number().describe('Normalized height (0.0 to 1.0).'),
   }).optional().describe('The bounding box of the OPG radiograph if detected.'),
@@ -41,7 +41,7 @@ CRITICAL INSTRUCTIONS FOR CROP PRECISION:
 2. AGGRESSIVE BACKGROUND REJECTION: Explicitly ignore and exclude the following "Negative Features":
    - Monitor bezels or physical lightboxes.
    - Background text, labels, patient names, dates, or hospital logos appearing on the screen.
-   - Browser tabs or UI elements of the viewing software.
+   - Browser tabs or UI elements of the viewing software (e.g. "Preview", "File", "Edit" menus).
    - Reflections on the monitor.
 3. LANDSCAPE PRIORITY: OPGs are naturally landscape. Ensure the bounding box captures the full width from left to right condyle/wisdom tooth area.
 4. TIGHT BOUNDS: If background "words" or logos are present at the edges, shrink the bounding box inward to exclude them, prioritizing clinical dentition over empty radiograph borders.

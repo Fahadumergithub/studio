@@ -19,7 +19,7 @@ type AnalysisResults = AiRadiographDetectionOutput['results'];
 type Hotspots = LocateFindingsOutput['hotspots'];
 
 export function DentalVisionClient() {
-  const [mounted, setMounted] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
   const [activeTab, setActiveTab] = useState('upload');
   
   const [currentOriginalImage, setCurrentOriginalImage] = useState<string | null>(null);
@@ -45,7 +45,7 @@ export function DentalVisionClient() {
   const { toast } = useToast();
 
   useEffect(() => {
-    setMounted(true);
+    setIsMounted(true);
     return () => stopLive();
   }, []);
 
@@ -180,7 +180,6 @@ export function DentalVisionClient() {
     
     setIsProcessingLive(true);
     try {
-      // Use lower res for detection to prevent timeout
       const compressedForDetection = await compressImage(rawUri, 600);
       
       let finalUri = rawUri;
@@ -189,7 +188,7 @@ export function DentalVisionClient() {
         if (opg.isOpg && opg.boundingBox) {
           const { x, y, width, height } = opg.boundingBox;
           
-          // Sanitization: Ensure coordinates are within 0-1 range and have minimum size
+          // Refined Sanitization: Ensure crop is substantial and valid
           const sx = Math.max(0, Math.min(1, x));
           const sy = Math.max(0, Math.min(1, y));
           const sw = Math.max(0.1, Math.min(1 - sx, width));
@@ -214,7 +213,6 @@ export function DentalVisionClient() {
       setCurrentOriginalImage(clinicalReadyUri);
       
       startAnalysisTransition(async () => {
-        // Pass the raw original as a fallback if the isolated one fails
         await processImage(clinicalReadyUri, false, rawUri);
       });
       
@@ -268,14 +266,7 @@ export function DentalVisionClient() {
     );
   }, [clinicalInsights, selectedFindingIndex, currentResults]);
 
-  if (!mounted) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
-        <Loader2 className="h-10 w-10 animate-spin text-primary" />
-        <p className="text-sm font-bold uppercase tracking-widest opacity-50">Initializing Dental AR...</p>
-      </div>
-    );
-  }
+  if (!isMounted) return null;
 
   const LoadingOverlay = () => (
     <div className="absolute inset-0 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center z-50 animate-in fade-in duration-300">
