@@ -32,19 +32,19 @@ const opgDetectorPrompt = ai.definePrompt({
   name: 'opgDetectorPrompt',
   input: { schema: OpgDetectorInputSchema },
   output: { schema: OpgDetectorOutputSchema },
-  prompt: `You are a specialized dental radiograph identification agent. 
-Your primary goal is to find the panoramic dental X-ray (OPG) within the frame and return its bounding box.
+  prompt: `You are a specialized clinical imaging assistant. Your task is to locate the dental panoramic radiograph (OPG) within the provided frame.
+
+Look for the characteristic 'horseshoe' or 'u-shaped' structure of the mandible and maxilla. The OPG contains the full dentition, roots, and surrounding bone.
 
 Instructions:
-1. Identifying OPG: Look for the curved jaw structure showing all teeth. It might be on a computer screen, a film, or a piece of paper.
-2. Screen Context: If the OPG is on a monitor, ignore the monitor stand, keyboard, or room background. Focus ONLY on the bright area showing the X-ray content.
-3. Flexibility: Even if there are reflections, bezel frames, or it's viewed at an angle, if the panoramic X-ray content is identifiable, set isOpg to true.
-4. Bounding Box: Provide the tightest possible bounding box around the X-ray content area itself. 
-5. Coordinates: Use normalized [0, 1] coordinates. x and y are the top-left corner. width and height are the dimensions.
+1. Precision: Identify the exact boundaries of the radiograph film or digital frame. Include all teeth from wisdom tooth to wisdom tooth.
+2. Contextual Awareness: The OPG may be displayed on a computer monitor, held up to light, or printed. Focus exclusively on the clinical image content, ignoring monitor bezels, room backgrounds, or reflections.
+3. Stability: Ensure the bounding box is tight around the actual X-ray data area to maximize the quality of the subsequent cropping.
+4. Threshold: If the panoramic jaw structure is clearly identifiable, set isOpg to true even if the image quality is suboptimal.
 
 Image: {{media url=imageDataUri}}`,
   config: {
-    temperature: 0, // Deterministic for better bounding box accuracy
+    temperature: 0,
   }
 });
 
