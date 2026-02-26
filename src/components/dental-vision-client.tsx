@@ -2,7 +2,7 @@
 
 import { useState, useRef, useTransition, useEffect } from 'react';
 import Image from 'next/image';
-import { Upload, X, Bot, ScanLine, Eye, Camera, Video, VideoOff, Info, Loader2 } from 'lucide-react';
+import { Upload, X, Bot, ScanLine, Eye, Camera, Video, VideoOff, Info, Loader2, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -30,10 +30,11 @@ export function DentalVisionClient() {
   const [processedWebcamImage, setProcessedWebcamImage] = useState<string | null>(null);
   const [overlayStyle, setOverlayStyle] = useState<React.CSSProperties>({});
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
+  const [flash, setFlash] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const loopRef = useRef<NodeJS.Timeout | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   const { toast } = useToast();
@@ -64,7 +65,6 @@ export function DentalVisionClient() {
       
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        // Force play
         await videoRef.current.play();
       }
       setHasCameraPermission(true);
@@ -81,6 +81,95 @@ export function DentalVisionClient() {
     }
   };
 
+  const captureAndAnalyze = async (manual = false) => {
+    if (!videoRef.current || !canvasRef.current) return false;
+    
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    
+    if (video.readyState < 2 || video.videoWidth === 0 || video.paused) return false;
+
+    // Visual feedback for manual capture
+    if (manual) {
+      setFlash(true);
+      setTimeout(() => setFlash(false), 150);
+    }
+
+    const MAX_DIMENSION = 1024;
+    let width = video.videoWidth;
+    let height = video.videoHeight;
+
+    if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+      if (width > height) {
+        height = (MAX_DIMENSION / width) * height;
+        width = MAX_DIMENSION;
+      } else {
+        width = (MAX_DIMENSION / height) * width;
+        height = MAX_DIMENSION;
+      }
+    }
+
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) return false;
+
+    context.drawImage(video, 0, 0, width, height);
+    const rawDataUri = canvas.toDataURL('image/jpeg', 0.7);
+
+    setIsCheckingOpg(true);
+    try {
+      const opgDetection = await runOpgDetection({ imageDataUri: rawDataUri });
+      console.log("Detection Result:", opgDetection);
+
+      if (opgDetection.isOpg && opgDetection.boundingBox) {
+        const box = opgDetection.boundingBox;
+        
+        // Use Math.floor to ensure integer coordinates
+        const cropX = Math.floor(Math.max(0, box.x * width));
+        const cropY = Math.floor(Math.max(0, box.y * height));
+        const cropWidth = Math.floor(Math.min(width - cropX, box.width * width));
+        const cropHeight = Math.floor(Math.min(height - cropY, box.height * height));
+
+        if (cropWidth > 50 && cropHeight > 50) {
+          const cropCanvas = document.createElement('canvas');
+          cropCanvas.width = cropWidth;
+          cropCanvas.height = cropHeight;
+          const cropCtx = cropCanvas.getContext('2d');
+          
+          if (cropCtx) {
+            cropCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+            const croppedDataUri = cropCanvas.toDataURL('image/jpeg', 0.8);
+
+            const result = await runAnalysis({ radiographDataUri: croppedDataUri });
+            if (result.success) {
+              setProcessedWebcamImage(result.data.processedImage);
+              setOverlayStyle({
+                left: `${(cropX / width) * 100}%`,
+                top: `${(cropY / height) * 100}%`,
+                width: `${(cropWidth / width) * 100}%`,
+                height: `${(cropHeight / height) * 100}%`,
+                position: 'absolute'
+              });
+              setIsCheckingOpg(false);
+              return true;
+            }
+          }
+        }
+      } else if (manual) {
+        toast({
+          title: "OPG Not Found",
+          description: "Try centering the radiograph more clearly in the frame.",
+        });
+      }
+    } catch (e) {
+      console.error("Analysis failed:", e);
+    } finally {
+      setIsCheckingOpg(false);
+    }
+    return false;
+  };
+
   const startLiveAnalysis = async () => {
     const success = await initCamera();
     if (!success) return;
@@ -88,100 +177,21 @@ export function DentalVisionClient() {
     setIsLiveAnalyzing(true);
     setProcessedWebcamImage(null);
     
-    intervalRef.current = setInterval(async () => {
-      if (videoRef.current && canvasRef.current && isLiveAnalyzing) {
-        const video = videoRef.current;
-        const canvas = canvasRef.current;
-        
-        // Ensure video is playing and has data
-        if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0 || video.paused) {
-          return; 
-        }
+    // Use a recursive loop with timeout for better control
+    const loop = async () => {
+      if (!isLiveAnalyzing) return;
+      await captureAndAnalyze();
+      loopRef.current = setTimeout(loop, 4000);
+    };
 
-        const MAX_DIMENSION = 1024;
-        let width = video.videoWidth;
-        let height = video.videoHeight;
-
-        if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
-          if (width > height) {
-            height = (MAX_DIMENSION / width) * height;
-            width = MAX_DIMENSION;
-          } else {
-            width = (MAX_DIMENSION / height) * width;
-            height = MAX_DIMENSION;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const context = canvas.getContext('2d');
-        
-        if (context) {
-          try {
-            context.drawImage(video, 0, 0, width, height);
-            const rawDataUri = canvas.toDataURL('image/jpeg', 0.7);
-
-            setIsCheckingOpg(true);
-            // 1. Detect if OPG exists in the frame and get its box
-            const opgDetection = await runOpgDetection({ imageDataUri: rawDataUri });
-            setIsCheckingOpg(false);
-
-            console.log("OPG Detection Result:", opgDetection);
-
-            if (opgDetection.isOpg && opgDetection.boundingBox) {
-              const box = opgDetection.boundingBox;
-              
-              // 2. Crop the image to just the OPG
-              // Ensure coordinates are within valid range
-              const cropX = Math.max(0, box.x * width);
-              const cropY = Math.max(0, box.y * height);
-              const cropWidth = Math.min(width - cropX, box.width * width);
-              const cropHeight = Math.min(height - cropY, box.height * height);
-
-              if (cropWidth > 50 && cropHeight > 50) {
-                const cropCanvas = document.createElement('canvas');
-                cropCanvas.width = cropWidth;
-                cropCanvas.height = cropHeight;
-                const cropCtx = cropCanvas.getContext('2d');
-                
-                if (cropCtx) {
-                  cropCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-                  const croppedDataUri = cropCanvas.toDataURL('image/jpeg', 0.8);
-
-                  // 3. Run dental analysis on the cropped image
-                  const result = await runAnalysis({ radiographDataUri: croppedDataUri });
-                  if (result.success) {
-                    setProcessedWebcamImage(result.data.processedImage);
-                    
-                    // 4. Map the overlay to the correct position on the video
-                    setOverlayStyle({
-                      left: `${(cropX / width) * 100}%`,
-                      top: `${(cropY / height) * 100}%`,
-                      width: `${(cropWidth / width) * 100}%`,
-                      height: `${(cropHeight / height) * 100}%`,
-                      position: 'absolute'
-                    });
-                  }
-                }
-              }
-            } else {
-              // If OPG is not detected clearly, clear the overlay
-              setProcessedWebcamImage(null);
-            }
-          } catch (e) {
-            console.error("Analysis pipeline failed:", e);
-            setIsCheckingOpg(false);
-          }
-        }
-      }
-    }, 4000); // 4 second cycle for stability and to prevent rate limiting
+    loop();
   };
 
   const stopLiveAnalysis = () => {
     setIsLiveAnalyzing(false);
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    if (loopRef.current) {
+      clearTimeout(loopRef.current);
+      loopRef.current = null;
     }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
@@ -367,7 +377,7 @@ export function DentalVisionClient() {
                     </h2>
                     <div className="text-xs text-muted-foreground bg-accent px-2 py-1 rounded-full flex items-center gap-1 min-w-[120px] justify-center">
                       {isCheckingOpg ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                      {isCheckingOpg ? 'Scanning...' : 'OPG Auto-Detection'}
+                      {isCheckingOpg ? 'Analyzing...' : 'OPG Auto-Detection'}
                     </div>
                   </div>
                   
@@ -381,6 +391,9 @@ export function DentalVisionClient() {
                       playsInline 
                     />
                     
+                    {/* FLASH EFFECT */}
+                    {flash && <div className="absolute inset-0 bg-white z-50 animate-out fade-out duration-150" />}
+
                     {/* OPG Alignment Guide Overlay (Only when no analysis is active) */}
                     {!processedWebcamImage && (
                       <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
@@ -434,35 +447,46 @@ export function DentalVisionClient() {
 
                   <canvas ref={canvasRef} className="hidden" />
 
-                  <div className="flex flex-col gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {!isLiveAnalyzing ? (
                       <Button 
                         onClick={startLiveAnalysis} 
-                        className="w-full h-12 shadow-md hover:shadow-lg transition-all" 
+                        className="w-full h-12 shadow-md hover:shadow-lg transition-all sm:col-span-2" 
                         size="lg"
                       >
                         <Video className="mr-2 h-5 w-5"/>
                         Start AR Session
                       </Button>
                     ) : (
-                      <Button 
-                        onClick={stopLiveAnalysis} 
-                        className="w-full h-12" 
-                        size="lg" 
-                        variant="destructive"
-                      >
-                        <VideoOff className="mr-2 h-5 w-5"/>
-                        End Session
-                      </Button>
+                      <>
+                        <Button 
+                          onClick={() => captureAndAnalyze(true)} 
+                          className="h-12 bg-primary hover:bg-primary/90" 
+                          size="lg"
+                          disabled={isCheckingOpg}
+                        >
+                          <Target className="mr-2 h-5 w-5"/>
+                          Capture & Analyze
+                        </Button>
+                        <Button 
+                          onClick={stopLiveAnalysis} 
+                          className="h-12" 
+                          size="lg" 
+                          variant="destructive"
+                        >
+                          <VideoOff className="mr-2 h-5 w-5"/>
+                          End Session
+                        </Button>
+                      </>
                     )}
-                    <div className="flex flex-col gap-1 items-center">
-                      <p className="text-[10px] text-center text-muted-foreground uppercase tracking-widest font-bold">
-                        Intelligent Filtering
-                      </p>
-                      <p className="text-[10px] text-center text-muted-foreground/60">
-                        Privacy First: Frames are analyzed only when a panoramic radiograph is centered.
-                      </p>
-                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1 items-center">
+                    <p className="text-[10px] text-center text-muted-foreground uppercase tracking-widest font-bold">
+                      Intelligent Filtering
+                    </p>
+                    <p className="text-[10px] text-center text-muted-foreground/60">
+                      If auto-detection is slow, use the "Capture & Analyze" button to manually process the current frame.
+                    </p>
                   </div>
                </div>
             </CardContent>
