@@ -2,7 +2,7 @@
 
 import { useState, useRef, useTransition, useEffect, useMemo } from 'react';
 import Image from 'next/image';
-import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle } from 'lucide-react';
+import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle, RefreshCcw, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -34,6 +34,7 @@ export function DentalVisionClient() {
 
   const [isLiveActive, setIsLiveActive] = useState(false);
   const [isProcessingLive, setIsProcessingLive] = useState(false);
+  const [showLiveResults, setShowLiveResults] = useState(false);
   const [flash, setFlash] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -83,6 +84,7 @@ export function DentalVisionClient() {
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       setIsLiveActive(true);
+      setShowLiveResults(false);
     } catch (e) {
       toast({ variant: 'destructive', title: "Camera Access Denied", description: "Please allow camera access to use Live AR." });
     }
@@ -96,7 +98,7 @@ export function DentalVisionClient() {
     }
   };
 
-  const processImage = async (dataUri: string) => {
+  const processImage = async (dataUri: string, autoNav: boolean = true) => {
     setCurrentProcessedImage(null);
     setCurrentResults(null);
     setClinicalInsights(null);
@@ -105,7 +107,6 @@ export function DentalVisionClient() {
     setIsAiRateLimited(false);
 
     try {
-      // Ensure the image sent to the API is within safe payload limits for mobile
       const compressedUri = await compressImage(dataUri, 1200);
       const result = await runAnalysis({ radiographDataUri: compressedUri });
       
@@ -129,8 +130,13 @@ export function DentalVisionClient() {
           setIsAiRateLimited(true);
         }
         
-        setActiveTab('consult');
-        toast({ title: "Analysis Complete", description: "Review findings in the Consult tab." });
+        if (autoNav) {
+          setActiveTab('consult');
+        } else {
+          setShowLiveResults(true);
+        }
+        
+        toast({ title: "Analysis Complete", description: "Clinical findings have been mapped." });
       } else {
         toast({ variant: 'destructive', title: "Analysis Failed", description: result.error });
       }
@@ -151,7 +157,6 @@ export function DentalVisionClient() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
-    // Capture high-res source
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
@@ -162,7 +167,6 @@ export function DentalVisionClient() {
     
     setIsProcessingLive(true);
     try {
-      // Step 1: Low-res thumbnail for isolation detection (fast, saves quota/timeout)
       const compressedForDetection = await compressImage(rawUri, 600);
       
       let finalUri = rawUri;
@@ -187,12 +191,11 @@ export function DentalVisionClient() {
         console.warn('Isolation failed, falling back to full frame:', opgError);
       }
 
-      // Final compression for analysis
       const clinicalReadyUri = await compressImage(finalUri, 1200);
       setCurrentOriginalImage(clinicalReadyUri);
       
       startAnalysisTransition(async () => {
-        await processImage(clinicalReadyUri);
+        await processImage(clinicalReadyUri, false);
       });
       
       stopLive();
@@ -232,7 +235,7 @@ export function DentalVisionClient() {
   const startUploadAnalysis = () => {
     if (currentOriginalImage) {
       startAnalysisTransition(async () => {
-        await processImage(currentOriginalImage);
+        await processImage(currentOriginalImage, true);
       });
     }
   };
@@ -244,6 +247,30 @@ export function DentalVisionClient() {
       p.condition.toLowerCase().includes(disease) || disease.includes(p.condition.toLowerCase())
     );
   }, [clinicalInsights, selectedFindingIndex, currentResults]);
+
+  const LoadingOverlay = () => (
+    <div className="absolute inset-0 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center z-50 animate-in fade-in duration-300">
+      <div className="relative mb-8">
+        <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
+        <div className="relative h-24 w-24 bg-primary/10 rounded-full flex items-center justify-center border-4 border-primary/20">
+          <Sparkles className="h-10 w-10 text-primary animate-pulse" />
+        </div>
+      </div>
+      <div className="text-center space-y-2">
+        <h3 className="text-xl font-black text-primary tracking-tighter uppercase">Analyzing Radiograph</h3>
+        <div className="flex items-center justify-center gap-2">
+          <div className="h-1 w-12 bg-primary/20 rounded-full overflow-hidden">
+            <div className="h-full bg-primary animate-progress" />
+          </div>
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Running Inference</p>
+          <div className="h-1 w-12 bg-primary/20 rounded-full overflow-hidden">
+            <div className="h-full bg-primary animate-progress" />
+          </div>
+        </div>
+      </div>
+      <div className="absolute inset-x-0 h-px bg-gradient-to-r from-transparent via-primary to-transparent opacity-50 animate-scan" />
+    </div>
+  );
 
   return (
     <div className="space-y-4 max-w-5xl mx-auto pb-20 px-2 sm:px-0">
@@ -287,29 +314,7 @@ export function DentalVisionClient() {
                 )}
               </div>
 
-              {isAnalyzing && (
-                <div className="absolute inset-0 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center z-50 animate-in fade-in duration-300">
-                  <div className="relative mb-8">
-                    <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
-                    <div className="relative h-24 w-24 bg-primary/10 rounded-full flex items-center justify-center border-4 border-primary/20">
-                      <Sparkles className="h-10 w-10 text-primary animate-pulse" />
-                    </div>
-                  </div>
-                  <div className="text-center space-y-2">
-                    <h3 className="text-xl font-black text-primary tracking-tighter uppercase">Analyzing Radiograph</h3>
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="h-1 w-12 bg-primary/20 rounded-full overflow-hidden">
-                        <div className="h-full bg-primary animate-progress" />
-                      </div>
-                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">Running Inference</p>
-                      <div className="h-1 w-12 bg-primary/20 rounded-full overflow-hidden">
-                        <div className="h-full bg-primary animate-progress" />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="absolute inset-x-0 h-px bg-gradient-to-r from-transparent via-primary to-transparent opacity-50 animate-scan" />
-                </div>
-              )}
+              {isAnalyzing && <LoadingOverlay />}
 
               <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
               
@@ -340,47 +345,79 @@ export function DentalVisionClient() {
 
         <TabsContent value="live">
           <Card className="border-primary/10 shadow-2xl overflow-hidden rounded-2xl">
-            <CardContent className="p-0">
+            <CardContent className="p-0 relative">
               <div className="relative aspect-[4/3] sm:aspect-video bg-black flex items-center justify-center overflow-hidden">
-                <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+                {!showLiveResults ? (
+                  <>
+                    <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 border-[30px] border-black/40 pointer-events-none">
+                      <div className="w-full h-full border-2 border-primary/40 rounded-lg relative overflow-hidden">
+                        <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-primary rounded-tl-sm" />
+                        <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-primary rounded-tr-sm" />
+                        <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-primary rounded-bl-sm" />
+                        <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-primary rounded-br-sm" />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  currentProcessedImage && (
+                    <div className="relative w-full h-full animate-in zoom-in-95 duration-500">
+                      <Image src={currentProcessedImage} alt="AR Findings" fill className="object-contain" />
+                    </div>
+                  )
+                )}
                 
-                {flash && <div className="absolute inset-0 bg-white z-50 animate-out fade-out duration-300" />}
+                {flash && <div className="absolute inset-0 bg-white z-[60] animate-out fade-out duration-300" />}
                 
-                <div className="absolute inset-0 border-[30px] border-black/40 pointer-events-none">
-                  <div className="w-full h-full border-2 border-primary/40 rounded-lg relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-primary rounded-tl-sm" />
-                    <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-primary rounded-tr-sm" />
-                    <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-primary rounded-bl-sm" />
-                    <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-primary rounded-br-sm" />
-                    
-                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-40 animate-scan" />
-                  </div>
-                </div>
+                {(isAnalyzing || isProcessingLive) && <LoadingOverlay />}
 
-                {!isLiveActive && (
+                {!isLiveActive && !showLiveResults && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md">
                     <Button onClick={initCamera} size="lg" className="h-16 px-10 rounded-full font-black">
                       START CAMERA
                     </Button>
                   </div>
                 )}
-                
-                {isProcessingLive && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm z-40">
-                    <div className="h-16 w-16 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4" />
-                    <p className="text-white text-xs font-black uppercase tracking-widest animate-pulse">Isolating Radiograph...</p>
+              </div>
+
+              <div className="p-4 bg-background border-t">
+                {!showLiveResults ? (
+                  <>
+                    <Button onClick={handleCapture} disabled={isProcessingLive || !isLiveActive || isAnalyzing} size="lg" className="w-full h-20 text-xl font-black rounded-2xl shadow-xl transition-all active:scale-95">
+                      {isProcessingLive || isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <Target className="mr-3 h-7 w-7" />}
+                      CAPTURE & ANALYZE
+                    </Button>
+                    <div className="flex items-center justify-center gap-2 mt-4 text-muted-foreground opacity-60">
+                      <Info className="h-3 w-3" />
+                      <p className="text-[10px] font-black uppercase tracking-widest text-center">Isolate clinical frame for precision</p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-4 animate-in slide-in-from-bottom-4 duration-500">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-col">
+                        <h4 className="text-xs font-black uppercase text-primary">In-Situ Analysis Complete</h4>
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold">{currentResults?.length || 0} Findings Identified</p>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={initCamera} className="rounded-full h-10 px-4 font-black text-[10px] uppercase">
+                        <RefreshCcw className="mr-2 h-3 w-3" /> RETAKE
+                      </Button>
+                    </div>
+                    
+                    <Button 
+                      onClick={() => {
+                        setShowLiveResults(false);
+                        setActiveTab('consult');
+                      }} 
+                      size="lg" 
+                      className="w-full h-20 text-lg font-black rounded-2xl shadow-2xl bg-primary hover:bg-primary/90"
+                    >
+                      <Sparkles className="mr-3 h-6 w-6" />
+                      START AI TUTORING DEEP-DIVE
+                      <ArrowRight className="ml-2 h-5 w-5" />
+                    </Button>
                   </div>
                 )}
-              </div>
-              <div className="p-4 bg-background">
-                <Button onClick={handleCapture} disabled={isProcessingLive || !isLiveActive || isAnalyzing} size="lg" className="w-full h-20 text-xl font-black rounded-2xl shadow-xl transition-all active:scale-95">
-                  {isProcessingLive || isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <Target className="mr-3 h-7 w-7" />}
-                  CAPTURE & ANALYZE
-                </Button>
-                <div className="flex items-center justify-center gap-2 mt-4 text-muted-foreground opacity-60">
-                  <Info className="h-3 w-3" />
-                  <p className="text-[10px] font-black uppercase tracking-widest text-center">Center clinical frame to exclude background noise</p>
-                </div>
               </div>
               <canvas ref={canvasRef} className="hidden" />
             </CardContent>
