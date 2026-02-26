@@ -32,20 +32,16 @@ const opgDetectorPrompt = ai.definePrompt({
   name: 'opgDetectorPrompt',
   input: { schema: OpgDetectorInputSchema },
   output: { schema: OpgDetectorOutputSchema },
-  prompt: `You are a dental radiograph assistant. Your task is to look at the provided image and determine if it contains a dental OPG (Orthopantomogram / Panoramic X-ray).
-
-If an OPG is present, you must identify its exact bounding box so we can crop the background.
-
-Image: {{media url=imageDataUri}}
+  prompt: `You are a specialized dental radiograph identification agent. 
+Look at the provided image and determine if it contains an OPG (Orthopantomogram), which is a panoramic dental X-ray showing all teeth in a single wide image.
 
 Instructions:
-1. Set 'isOpg' to true only if a panoramic dental x-ray is clearly visible.
-2. Provide a 'confidence' score between 0 and 1.
-3. If 'isOpg' is true, provide the 'boundingBox' using normalized coordinates (0.0 to 1.0).
-   - x, y: Top-left corner.
-   - width, height: Dimensions of the OPG.
+1. Identifying OPG: Look for the characteristic curved jaw structure and panoramic view of all teeth. It may be displayed on a computer monitor, a lightbox, or be a physical film.
+2. Bounding Box: If an OPG is present, provide the tightest possible bounding box around the X-ray area itself.
+3. Coordinates: Use normalized [0, 1] coordinates. x and y are the top-left corner.
+4. isOpg: Set to true if a panoramic dental x-ray is identifiable.
 
-Focus only on the OPG itself, excluding any physical borders of the film or lightboxes if possible.`,
+Image: {{media url=imageDataUri}}`,
 });
 
 export async function detectOpg(input: OpgDetectorInput): Promise<OpgDetectorOutput> {
