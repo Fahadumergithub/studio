@@ -2,7 +2,7 @@
 
 import { useState, useRef, useTransition, useEffect } from 'react';
 import Image from 'next/image';
-import { Upload, X, Bot, ScanLine, Eye, Camera, Video, VideoOff } from 'lucide-react';
+import { Upload, X, Bot, ScanLine, Eye, Camera, Video, VideoOff, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -12,7 +12,6 @@ import type { AiRadiographDetectionOutput } from '@/ai/flows/ai-radiograph-detec
 import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-
 
 type AnalysisResults = AiRadiographDetectionOutput['results'];
 
@@ -42,38 +41,38 @@ export function DentalVisionClient() {
   useEffect(() => {
     async function getCameraPermission() {
       try {
-        // First, try for the environment-facing camera (ideal for radiographs)
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
+        // Stop any existing tracks
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+        }
+
+        const constraints = {
+          video: {
             facingMode: { ideal: 'environment' },
             width: { ideal: 1280 },
             height: { ideal: 720 }
-          } 
-        });
-        
+          }
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         streamRef.current = stream;
+        
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          // Ensure video plays
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current?.play().catch(e => console.error("Video play failed:", e));
+          };
         }
         setHasCameraPermission(true);
       } catch (error) {
-        console.warn("Could not get environment camera, trying default camera.", error);
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          streamRef.current = stream;
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-          }
-          setHasCameraPermission(true);
-        } catch (finalError) {
-          console.error('Error accessing camera:', finalError);
-          setHasCameraPermission(false);
-          toast({
-            variant: 'destructive',
-            title: 'Camera Access Denied',
-            description: 'Please enable camera permissions in your browser settings to use the live analysis feature.',
-          });
-        }
+        console.warn("Camera access error:", error);
+        setHasCameraPermission(false);
+        toast({
+          variant: 'destructive',
+          title: 'Camera Access Denied',
+          description: 'Please enable camera permissions to use the live analysis feature.',
+        });
       }
     }
 
@@ -91,7 +90,6 @@ export function DentalVisionClient() {
     };
   }, [hasCameraPermission, toast]);
 
-
   const startLiveAnalysis = () => {
     setIsLiveAnalyzing(true);
     setProcessedWebcamImage(null);
@@ -101,12 +99,11 @@ export function DentalVisionClient() {
         const video = videoRef.current;
         const canvas = canvasRef.current;
         
-        // Detailed check for video readiness
         if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0 || video.paused) {
-            return; 
+          return; 
         }
 
-        // Limit capture resolution to prevent API 500 errors due to large payloads
+        // Limit capture resolution to prevent API 500 errors (max 1024px)
         const MAX_DIMENSION = 1024;
         let width = video.videoWidth;
         let height = video.videoHeight;
@@ -124,13 +121,12 @@ export function DentalVisionClient() {
         canvas.width = width;
         canvas.height = height;
         const context = canvas.getContext('2d');
+        
         if (context) {
           try {
             context.drawImage(video, 0, 0, width, height);
-            // Use slightly lower quality to keep payload small
             const dataUri = canvas.toDataURL('image/jpeg', 0.7);
 
-            // Directly call the action without transition for speed in live view
             const result = await runAnalysis({ radiographDataUri: dataUri });
             if (result.success) {
               setProcessedWebcamImage(result.data.processedImage);
@@ -138,11 +134,11 @@ export function DentalVisionClient() {
               console.error("Live analysis frame failed:", result.error);
             }
           } catch (e) {
-            console.error("Canvas draw/capture failed:", e);
+            console.error("Canvas capture failed:", e);
           }
         }
       }
-    }, 3000); // Increased to 3 seconds to be safer with API processing time
+    }, 3000);
   };
 
   const stopLiveAnalysis = () => {
@@ -161,15 +157,17 @@ export function DentalVisionClient() {
         toast({
           variant: 'destructive',
           title: 'Invalid File Type',
-          description: 'Please upload an image file (JPEG, PNG, etc.).',
+          description: 'Please upload an image file.',
         });
         return;
       }
       const reader = new FileReader();
       reader.onload = (e) => {
-        clearImage();
         setOriginalImage(e.target?.result as string);
         setFileName(file.name);
+        setProcessedImage(null);
+        setAnalysisResults(null);
+        setAnalysisSummary(null);
       };
       reader.readAsDataURL(file);
     }
@@ -192,11 +190,9 @@ export function DentalVisionClient() {
           const summaryResult = await getAnalysisSummary({ results: result.data.results });
           if (summaryResult.success) {
             setAnalysisSummary(summaryResult.data.summary);
-          } else {
-            setAnalysisSummary(`Could not generate summary: ${summaryResult.error}`);
           }
         } else {
-          setAnalysisSummary('No specific items were detected in the analysis.');
+          setAnalysisSummary('No findings detected.');
         }
       } else {
         toast({
@@ -219,27 +215,14 @@ export function DentalVisionClient() {
     }
   };
 
-  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-  const onDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-    handleFileChange(e.dataTransfer.files);
-  };
-  
   return (
     <div className="space-y-8">
       <Tabs defaultValue="upload" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="upload"><Upload className="mr-2" />Upload Radiograph</TabsTrigger>
-          <TabsTrigger value="live"><Camera className="mr-2" />Live Analysis</TabsTrigger>
+          <TabsTrigger value="upload"><Upload className="mr-2 h-4 w-4" />Upload</TabsTrigger>
+          <TabsTrigger value="live"><Camera className="mr-2 h-4 w-4" />Live AR</TabsTrigger>
         </TabsList>
+
         <TabsContent value="upload">
           <Card>
             <CardContent className="p-6">
@@ -247,13 +230,13 @@ export function DentalVisionClient() {
                 <div className="space-y-4">
                   <h2 className="text-2xl font-semibold text-primary/90 flex items-center gap-2">
                     <ScanLine className="size-6" />
-                    1. Upload Radiograph
+                    1. Upload OPG
                   </h2>
                   {originalImage ? (
                     <div className="relative group">
                       <Image
                         src={originalImage}
-                        alt="Uploaded Radiograph"
+                        alt="Uploaded OPG"
                         width={600}
                         height={400}
                         className="rounded-lg object-contain w-full border bg-muted/20"
@@ -263,31 +246,18 @@ export function DentalVisionClient() {
                         size="icon"
                         className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity rounded-full h-8 w-8"
                         onClick={clearImage}
-                        aria-label="Remove image"
                       >
                         <X className="size-4" />
                       </Button>
-                      <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs p-2 rounded-b-lg truncate">
-                        {fileName}
-                      </div>
                     </div>
                   ) : (
                     <div
-                      onDragOver={onDragOver}
-                      onDragLeave={onDragLeave}
-                      onDrop={onDrop}
                       onClick={() => fileInputRef.current?.click()}
-                      className={cn(
-                        'flex flex-col items-center justify-center p-10 border-2 border-dashed rounded-lg cursor-pointer hover:bg-accent/50 transition-colors aspect-video',
-                        isDragging ? 'border-primary bg-accent' : 'border-border'
-                      )}
+                      className="flex flex-col items-center justify-center p-10 border-2 border-dashed rounded-lg cursor-pointer hover:bg-accent/50 transition-colors aspect-video border-border"
                     >
                       <Upload className="size-12 text-muted-foreground mb-4" />
                       <p className="text-muted-foreground text-center">
-                        <span className="font-semibold text-primary">Click to upload</span> or drag and drop
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        PNG, JPG, or other image formats
+                        <span className="font-semibold text-primary">Click to upload</span> OPG radiograph
                       </p>
                       <input
                         ref={fileInputRef}
@@ -298,28 +268,23 @@ export function DentalVisionClient() {
                       />
                     </div>
                   )}
-                  <div className="flex gap-2">
-                    <Button onClick={handleAnalyze} disabled={!originalImage || isAnalyzing} className="w-full" size="lg">
-                      {isAnalyzing ? 'Analyzing...' : 'Run Analysis'}
-                    </Button>
-                  </div>
+                  <Button onClick={handleAnalyze} disabled={!originalImage || isAnalyzing} className="w-full" size="lg">
+                    {isAnalyzing ? 'Processing...' : 'Run AI Analysis'}
+                  </Button>
                 </div>
 
                 <div className="space-y-4">
                   <h2 className="text-2xl font-semibold text-primary/90 flex items-center gap-2">
                     <Bot className="size-6" />
-                    2. Analysis Results
+                    2. AI Findings
                   </h2>
-                  <div className="aspect-video w-full rounded-lg border bg-muted/30 flex items-center justify-center p-4 relative">
+                  <div className="aspect-video w-full rounded-lg border bg-muted/30 flex items-center justify-center p-4 relative overflow-hidden">
                     {isAnalyzing ? (
-                      <div className="w-full h-full flex flex-col items-center justify-center space-y-4">
-                        <Skeleton className="w-full h-full" />
-                        <p className="text-muted-foreground animate-pulse">AI is processing the image...</p>
-                      </div>
+                      <Skeleton className="w-full h-full" />
                     ) : processedImage ? (
                       <Image
                         src={processedImage}
-                        alt="Analyzed Radiograph"
+                        alt="Analyzed OPG"
                         width={600}
                         height={400}
                         className="rounded-lg object-contain w-full"
@@ -327,47 +292,40 @@ export function DentalVisionClient() {
                     ) : (
                       <div className="text-center text-muted-foreground p-4">
                         <Eye className="mx-auto size-12 mb-4" />
-                        <p className="font-medium">Analysis preview will appear here.</p>
-                        <p className="text-sm mt-2">
-                          Upload and analyze a radiograph to see the results.
-                        </p>
+                        <p>Analysis results will appear here.</p>
                       </div>
                     )}
                   </div>
-                    <div className="space-y-4 pt-4">
-                      <h3 className="text-xl font-semibold text-primary/80 flex items-center gap-2">
-                        <Bot className="size-5" />
-                        Analysis Summary
-                      </h3>
-                      <Card className="bg-muted/30">
-                        <CardContent className="p-4 min-h-[120px]">
-                            {isAnalyzing && !analysisSummary ? (
-                                <div className="space-y-2">
-                                    <Skeleton className="h-4 w-3/4" />
-                                    <Skeleton className="h-4 w-full" />
-                                    <Skeleton className="h-4 w-1/2" />
-                                </div>
-                            ) : analysisSummary ? (
-                                <p className="text-sm text-foreground whitespace-pre-wrap">{analysisSummary}</p>
-                            ) : (
-                                <p className="text-sm text-muted-foreground">The AI-generated summary of findings will appear here once an analysis is complete.</p>
-                            )}
-                        </CardContent>
-                      </Card>
-                    </div>
+                  {analysisSummary && (
+                    <Card className="bg-muted/30">
+                      <CardContent className="p-4">
+                        <h3 className="text-sm font-semibold mb-2 flex items-center gap-1">
+                          <Info className="h-4 w-4" /> Summary
+                        </h3>
+                        <p className="text-sm text-foreground whitespace-pre-wrap">{analysisSummary}</p>
+                      </CardContent>
+                    </Card>
+                  )}
                 </div>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
+
         <TabsContent value="live">
           <Card>
             <CardContent className="p-6">
                <div className="space-y-4">
-                  <h2 className="text-2xl font-semibold text-primary/90 flex items-center gap-2">
-                    <Camera className="size-6" />
-                    Live AR Analysis
-                  </h2>
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-2xl font-semibold text-primary/90 flex items-center gap-2">
+                      <Camera className="size-6" />
+                      Live AR Scanning
+                    </h2>
+                    <div className="text-xs text-muted-foreground bg-accent px-2 py-1 rounded-full">
+                      OPG Optimized
+                    </div>
+                  </div>
+                  
                   <div className="relative w-full aspect-video bg-black rounded-lg border flex items-center justify-center overflow-hidden">
                     <video 
                       ref={videoRef} 
@@ -376,51 +334,83 @@ export function DentalVisionClient() {
                       muted 
                       playsInline 
                     />
+                    
+                    {/* OPG Alignment Guide Overlay */}
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                      <div className="w-[85%] h-[70%] border-2 border-primary/40 rounded-xl flex items-center justify-center">
+                        <div className="absolute top-1/2 left-0 right-0 h-px bg-primary/20" />
+                        <div className="absolute top-0 bottom-0 left-1/2 w-px bg-primary/20" />
+                        <div className="absolute -top-6 text-primary/60 text-[10px] uppercase font-bold tracking-widest">
+                          Align OPG Radiograph Here
+                        </div>
+                      </div>
+                    </div>
+
                     {processedWebcamImage && (
                       <div className="absolute inset-0 z-10 pointer-events-none">
                         <Image
                           src={processedWebcamImage}
-                          alt="Processed webcam overlay"
+                          alt="AI Analysis Overlay"
                           fill
-                          className="object-contain opacity-70 transition-opacity duration-300"
+                          className="object-contain opacity-80"
                         />
                       </div>
                     )}
+
                     {hasCameraPermission === false && (
                       <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 text-white p-4 z-20">
                         <VideoOff className="size-12 mb-4 text-destructive"/>
                         <p className="text-lg font-semibold">Camera Access Denied</p>
-                        <p className="text-sm text-center mt-2">Please enable camera permissions in your browser settings to use this feature.</p>
+                        <Button variant="outline" className="mt-4" onClick={() => setHasCameraPermission(null)}>
+                          Retry Permission
+                        </Button>
                       </div>
                     )}
-                     {isLiveAnalyzing && (
-                        <div className="absolute bottom-4 left-4 flex items-center gap-2 bg-black/60 text-white py-1.5 px-3 rounded-full text-sm z-20 backdrop-blur-sm">
-                            <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></div>
-                            Analyzing Live...
-                        </div>
+
+                    {isLiveAnalyzing && (
+                      <div className="absolute top-4 right-4 flex items-center gap-2 bg-black/60 text-white py-1 px-3 rounded-full text-xs z-20 backdrop-blur-sm border border-white/10">
+                        <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                        AI Analysis Active
+                      </div>
                     )}
                   </div>
+
                   <canvas ref={canvasRef} className="hidden" />
-                  <div className="flex gap-2">
-                     {!isLiveAnalyzing ? (
-                        <Button onClick={startLiveAnalysis} disabled={hasCameraPermission !== true} className="w-full" size="lg">
-                            <Video className="mr-2"/>
-                            Start Live Analysis
-                        </Button>
+
+                  <div className="flex flex-col gap-3">
+                    {!isLiveAnalyzing ? (
+                      <Button 
+                        onClick={startLiveAnalysis} 
+                        disabled={hasCameraPermission !== true} 
+                        className="w-full h-12" 
+                        size="lg"
+                      >
+                        <Video className="mr-2 h-5 w-5"/>
+                        Start Live Analysis
+                      </Button>
                     ) : (
-                        <Button onClick={stopLiveAnalysis} className="w-full" size="lg" variant="destructive">
-                            <VideoOff className="mr-2"/>
-                            Stop Analysis
-                        </Button>
+                      <Button 
+                        onClick={stopLiveAnalysis} 
+                        className="w-full h-12" 
+                        size="lg" 
+                        variant="destructive"
+                      >
+                        <VideoOff className="mr-2 h-5 w-5"/>
+                        Stop Analysis
+                      </Button>
                     )}
+                    <p className="text-[10px] text-center text-muted-foreground uppercase tracking-wider font-semibold">
+                      Ensure the x-ray is well-lit and centered in the frame
+                    </p>
                   </div>
                </div>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
-      <div className="text-center text-xs text-muted-foreground">
-        <p>This is a prototype for demonstration purposes. AI analysis may not be 100% accurate.</p>
+      
+      <div className="text-center text-xs text-muted-foreground pb-8">
+        <p>This prototype uses AI for screening assistance only. Not for final diagnosis.</p>
       </div>
     </div>
   );
