@@ -2,18 +2,24 @@
 
 import { useState, useRef, useTransition, useEffect } from 'react';
 import Image from 'next/image';
-import { Upload, X, Bot, ScanLine, Eye, Camera, Video, VideoOff, Info } from 'lucide-react';
+import { Upload, X, Bot, ScanLine, Eye, Camera, Video, VideoOff, Info, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { getAnalysisSummary, runAnalysis } from '@/app/actions';
+import { getAnalysisSummary, runAnalysis, runOpgDetection } from '@/app/actions';
 import type { AiRadiographDetectionOutput } from '@/ai/flows/ai-radiograph-detection-flow';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 type AnalysisResults = AiRadiographDetectionOutput['results'];
+
+interface CropBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export function DentalVisionClient() {
   // State for Upload workflow
@@ -23,13 +29,15 @@ export function DentalVisionClient() {
   const [analysisSummary, setAnalysisSummary] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [isAnalyzing, startAnalysisTransition] = useTransition();
-  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // State for Live Analysis workflow
   const [isLiveAnalyzing, setIsLiveAnalyzing] = useState(false);
+  const [isCheckingOpg, setIsCheckingOpg] = useState(false);
   const [processedWebcamImage, setProcessedWebcamImage] = useState<string | null>(null);
+  const [overlayStyle, setOverlayStyle] = useState<React.CSSProperties>({});
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
+  
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -37,11 +45,9 @@ export function DentalVisionClient() {
 
   const { toast } = useToast();
 
-  // Effect to get camera permission and stream
   useEffect(() => {
     async function getCameraPermission() {
       try {
-        // Stop any existing tracks
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(track => track.stop());
         }
@@ -59,7 +65,6 @@ export function DentalVisionClient() {
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          // Ensure video plays
           videoRef.current.onloadedmetadata = () => {
             videoRef.current?.play().catch(e => console.error("Video play failed:", e));
           };
@@ -103,7 +108,6 @@ export function DentalVisionClient() {
           return; 
         }
 
-        // Limit capture resolution to prevent API 500 errors (max 1024px)
         const MAX_DIMENSION = 1024;
         let width = video.videoWidth;
         let height = video.videoHeight;
@@ -125,20 +129,53 @@ export function DentalVisionClient() {
         if (context) {
           try {
             context.drawImage(video, 0, 0, width, height);
-            const dataUri = canvas.toDataURL('image/jpeg', 0.7);
+            const rawDataUri = canvas.toDataURL('image/jpeg', 0.7);
 
-            const result = await runAnalysis({ radiographDataUri: dataUri });
-            if (result.success) {
-              setProcessedWebcamImage(result.data.processedImage);
+            setIsCheckingOpg(true);
+            const opgDetection = await runOpgDetection({ imageDataUri: rawDataUri });
+            setIsCheckingOpg(false);
+
+            if (opgDetection.isOpg && opgDetection.boundingBox) {
+              // Crop image to the OPG bounding box
+              const box = opgDetection.boundingBox;
+              const cropX = box.x * width;
+              const cropY = box.y * height;
+              const cropWidth = box.width * width;
+              const cropHeight = box.height * height;
+
+              // Create temporary canvas for cropping
+              const cropCanvas = document.createElement('canvas');
+              cropCanvas.width = cropWidth;
+              cropCanvas.height = cropHeight;
+              const cropCtx = cropCanvas.getContext('2d');
+              if (cropCtx) {
+                cropCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+                const croppedDataUri = cropCanvas.toDataURL('image/jpeg', 0.8);
+
+                // Send cropped image to Dental API
+                const result = await runAnalysis({ radiographDataUri: croppedDataUri });
+                if (result.success) {
+                  setProcessedWebcamImage(result.data.processedImage);
+                  // Calculate overlay positioning relative to the video feed
+                  setOverlayStyle({
+                    left: `${box.x * 100}%`,
+                    top: `${box.y * 100}%`,
+                    width: `${box.width * 100}%`,
+                    height: `${box.height * 100}%`,
+                    position: 'absolute'
+                  });
+                }
+              }
             } else {
-              console.error("Live analysis frame failed:", result.error);
+              setProcessedWebcamImage(null);
             }
           } catch (e) {
-            console.error("Canvas capture failed:", e);
+            console.error("Analysis pipeline failed:", e);
+            setIsCheckingOpg(false);
           }
         }
       }
-    }, 3000);
+    }, 4000); // 4 seconds cycle for stability
   };
 
   const stopLiveAnalysis = () => {
@@ -319,10 +356,11 @@ export function DentalVisionClient() {
                   <div className="flex items-center justify-between">
                     <h2 className="text-2xl font-semibold text-primary/90 flex items-center gap-2">
                       <Camera className="size-6" />
-                      Live AR Scanning
+                      Intelligent Live AR
                     </h2>
-                    <div className="text-xs text-muted-foreground bg-accent px-2 py-1 rounded-full">
-                      OPG Optimized
+                    <div className="text-xs text-muted-foreground bg-accent px-2 py-1 rounded-full flex items-center gap-1">
+                      {isCheckingOpg ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                      OPG Auto-Detection
                     </div>
                   </div>
                   
@@ -341,18 +379,18 @@ export function DentalVisionClient() {
                         <div className="absolute top-1/2 left-0 right-0 h-px bg-primary/20" />
                         <div className="absolute top-0 bottom-0 left-1/2 w-px bg-primary/20" />
                         <div className="absolute -top-6 text-primary/60 text-[10px] uppercase font-bold tracking-widest">
-                          Align OPG Radiograph Here
+                          Place OPG X-Ray Here
                         </div>
                       </div>
                     </div>
 
                     {processedWebcamImage && (
-                      <div className="absolute inset-0 z-10 pointer-events-none">
+                      <div className="z-10 pointer-events-none" style={overlayStyle}>
                         <Image
                           src={processedWebcamImage}
                           alt="AI Analysis Overlay"
                           fill
-                          className="object-contain opacity-80"
+                          className="object-contain opacity-80 animate-in fade-in duration-500"
                         />
                       </div>
                     )}
@@ -368,9 +406,9 @@ export function DentalVisionClient() {
                     )}
 
                     {isLiveAnalyzing && (
-                      <div className="absolute top-4 right-4 flex items-center gap-2 bg-black/60 text-white py-1 px-3 rounded-full text-xs z-20 backdrop-blur-sm border border-white/10">
-                        <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                        AI Analysis Active
+                      <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/60 text-white py-1 px-3 rounded-full text-xs z-20 backdrop-blur-sm border border-white/10">
+                        <div className={cn("w-2 h-2 rounded-full", processedWebcamImage ? "bg-green-500" : "bg-yellow-500 animate-pulse")} />
+                        {processedWebcamImage ? "OPG Detected & Analyzed" : (isCheckingOpg ? "Detecting OPG..." : "Looking for OPG...")}
                       </div>
                     )}
                   </div>
@@ -386,7 +424,7 @@ export function DentalVisionClient() {
                         size="lg"
                       >
                         <Video className="mr-2 h-5 w-5"/>
-                        Start Live Analysis
+                        Start AR Session
                       </Button>
                     ) : (
                       <Button 
@@ -396,11 +434,11 @@ export function DentalVisionClient() {
                         variant="destructive"
                       >
                         <VideoOff className="mr-2 h-5 w-5"/>
-                        Stop Analysis
+                        End Session
                       </Button>
                     )}
                     <p className="text-[10px] text-center text-muted-foreground uppercase tracking-wider font-semibold">
-                      Ensure the x-ray is well-lit and centered in the frame
+                      API requests are only sent when a panoramic radiograph is detected
                     </p>
                   </div>
                </div>

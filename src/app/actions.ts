@@ -2,12 +2,12 @@
 
 import { aiRadiographDetection, type AiRadiographDetectionInput, type AiRadiographDetectionOutput } from '@/ai/flows/ai-radiograph-detection-flow';
 import { aiAnalysisSummary, type AiAnalysisSummaryInput, type AiAnalysisSummaryOutput } from '@/ai/flows/ai-analysis-summary-flow';
+import { detectOpg, type OpgDetectorInput, type OpgDetectorOutput } from '@/ai/flows/opg-detector-flow';
 import { z } from 'zod';
 
 const runAnalysisSchema = z.object({
   radiographDataUri: z.string().startsWith('data:image/'),
 });
-
 
 type AnalysisResult = {
   success: true;
@@ -35,9 +35,12 @@ export async function runAnalysis(input: AiRadiographDetectionInput): Promise<An
   } catch (e) {
     const error = e as Error;
     console.error('Error during radiograph analysis:', error);
-    // Pass the raw error message to the frontend
     return { success: false, error: error.message };
   }
+}
+
+export async function runOpgDetection(input: OpgDetectorInput): Promise<OpgDetectorOutput> {
+  return detectOpg(input);
 }
 
 const ResultItemSchema = z.object({
@@ -49,7 +52,6 @@ const ResultItemSchema = z.object({
 const getSummarySchema = z.object({
   results: z.array(ResultItemSchema),
 });
-
 
 type SummaryResult = {
   success: true;
