@@ -2,7 +2,7 @@
 
 import { useState, useRef, useTransition, useEffect, useMemo } from 'react';
 import Image from 'next/image';
-import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle, RefreshCcw, ArrowRight, CornerUpLeft, CornerUpRight, CornerDownLeft, CornerDownRight, CheckCircle2 } from 'lucide-react';
+import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle, RefreshCcw, ArrowRight, CornerUpLeft, CornerUpRight, CornerDownLeft, CornerDownRight, CheckCircle2, Maximize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -233,6 +233,13 @@ export function DentalVisionClient() {
     }
   };
 
+  const useFullFrameInstead = () => {
+    if (currentOriginalImage) {
+      setVerifiedScanUri(currentOriginalImage);
+      toast({ title: "Original Frame Selected", description: "Using full captured area for analysis." });
+    }
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -431,9 +438,14 @@ export function DentalVisionClient() {
                       <CheckCircle2 className="mr-3 h-6 w-6" />
                       CONFIRM & ANALYZE
                     </Button>
-                    <Button variant="outline" onClick={initCamera} className="w-full h-12 rounded-xl font-black uppercase text-xs">
-                      <RefreshCcw className="mr-2 h-4 w-4" /> RETAKE SCAN
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button variant="secondary" onClick={useFullFrameInstead} className="flex-1 h-12 rounded-xl font-black uppercase text-[10px]">
+                        <Maximize2 className="mr-2 h-4 w-4" /> USE FULL FRAME
+                      </Button>
+                      <Button variant="outline" onClick={initCamera} className="flex-1 h-12 rounded-xl font-black uppercase text-[10px]">
+                        <RefreshCcw className="mr-2 h-4 w-4" /> RETAKE SCAN
+                      </Button>
+                    </div>
                   </div>
                 ) : showLiveResults ? (
                   <div className="space-y-4 animate-in slide-in-from-bottom-4 duration-500">
