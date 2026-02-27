@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useRef, useTransition, useEffect, useMemo } from 'react';
+import { useState, useRef, useTransition, useEffect, useMemo, useCallback } from 'react';
 import Image from 'next/image';
-import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle, RefreshCcw, ArrowRight, CornerUpLeft, CornerUpRight, CornerDownLeft, CornerDownRight, CheckCircle2, Maximize2 } from 'lucide-react';
+import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle, RefreshCcw, ArrowRight, CheckCircle2, Maximize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,13 +15,42 @@ import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 
-interface Point { x: number; y: number; }
-type Quad = [Point, Point, Point, Point]; // TL, TR, BR, BL
+type AnalysisResults = AiRadiographDetectionOutput['results'];
+type Hotspots = LocateFindingsOutput['hotspots'];
+
+// ─── Quad types ───────────────────────────────────────────────────────────────
+interface QuadPoint { x: number; y: number; } // 0–1 normalized to canvas dims
+type Quad = [QuadPoint, QuadPoint, QuadPoint, QuadPoint]; // TL TR BR BL
+
+// ─── Coordinate helpers ───────────────────────────────────────────────────────
+
+/**
+ * Returns the rendered image rect inside an object-contain container.
+ * Accounts for letterbox / pillarbox black bars.
+ */
+function getRenderedImageRect(
+  containerW: number, containerH: number,
+  imageW: number, imageH: number
+) {
+  const cr = containerW / containerH;
+  const ir = imageW / imageH;
+  let width: number, height: number;
+  if (ir > cr) { width = containerW; height = containerW / ir; }
+  else         { height = containerH; width = containerH * ir; }
+  return {
+    left:   (containerW - width)  / 2,
+    top:    (containerH - height) / 2,
+    width,
+    height,
+  };
+}
+
+// ─── Auto-detect OPG ─────────────────────────────────────────────────────────
 
 function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
-  const SCALE = 0.2;
+  const SCALE = 0.25;
   const tmp = document.createElement('canvas');
-  tmp.width = Math.round(srcCanvas.width * SCALE);
+  tmp.width  = Math.round(srcCanvas.width  * SCALE);
   tmp.height = Math.round(srcCanvas.height * SCALE);
   const ctx = tmp.getContext('2d')!;
   ctx.drawImage(srcCanvas, 0, 0, tmp.width, tmp.height);
@@ -29,15 +58,15 @@ function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
 
   let total = 0;
   for (let i = 0; i < data.length; i += 4)
-    total += (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
+    total += (data[i] * 77 + data[i+1] * 150 + data[i+2] * 29) >> 8;
   const mean = total / (width * height);
-  const threshold = Math.max(30, mean - 40);
+  const threshold = Math.max(20, mean - 35);
 
   let minX = width, maxX = 0, minY = height, maxY = 0, count = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const idx = (y * width + x) * 4;
-      const lum = (data[idx] * 77 + data[idx + 1] * 150 + data[idx + 2] * 29) >> 8;
+      const lum = (data[idx]*77 + data[idx+1]*150 + data[idx+2]*29) >> 8;
       if (lum < threshold) {
         minX = Math.min(minX, x); maxX = Math.max(maxX, x);
         minY = Math.min(minY, y); maxY = Math.max(maxY, y);
@@ -47,41 +76,43 @@ function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
   }
 
   const area = (maxX - minX) * (maxY - minY);
-  const useDetection = count > 100 && area > width * height * 0.05 && area < width * height * 0.95;
-  const pad = 0.02;
+  const frameArea = width * height;
+  const pad = 0.025;
 
-  if (useDetection) {
+  if (count > 200 && area > frameArea * 0.04 && area < frameArea * 0.97) {
     return [
-      { x: Math.max(0, minX / width - pad),  y: Math.max(0, minY / height - pad) },
-      { x: Math.min(1, maxX / width + pad),   y: Math.max(0, minY / height - pad) },
-      { x: Math.min(1, maxX / width + pad),   y: Math.min(1, maxY / height + pad) },
-      { x: Math.max(0, minX / width - pad),   y: Math.min(1, maxY / height + pad) },
+      { x: Math.max(0, minX/width  - pad), y: Math.max(0, minY/height - pad) },
+      { x: Math.min(1, maxX/width  + pad), y: Math.max(0, minY/height - pad) },
+      { x: Math.min(1, maxX/width  + pad), y: Math.min(1, maxY/height + pad) },
+      { x: Math.max(0, minX/width  - pad), y: Math.min(1, maxY/height + pad) },
     ];
   }
+  // Fallback: wide centre crop
   return [
-    { x: 0.07, y: 0.12 }, { x: 0.93, y: 0.12 },
-    { x: 0.93, y: 0.88 }, { x: 0.07, y: 0.88 },
+    { x: 0.05, y: 0.15 }, { x: 0.95, y: 0.15 },
+    { x: 0.95, y: 0.85 }, { x: 0.05, y: 0.85 },
   ];
 }
 
+// ─── Perspective warp ─────────────────────────────────────────────────────────
+
 function solveHomography(src: [number,number][], dst: [number,number][]): number[] {
-  const A: number[][] = [];
-  const b: number[] = [];
+  const A: number[][] = [], b: number[] = [];
   for (let i = 0; i < 4; i++) {
     const [xs, ys] = src[i], [xd, yd] = dst[i];
-    A.push([xs, ys, 1, 0, 0, 0, -xd * xs, -xd * ys]);
-    A.push([0, 0, 0, xs, ys, 1, -yd * xs, -yd * ys]);
-    b.push(xd); b.push(yd);
+    A.push([xs, ys, 1, 0, 0, 0, -xd*xs, -xd*ys]);
+    A.push([0,  0,  0, xs, ys, 1, -yd*xs, -yd*ys]);
+    b.push(xd, yd);
   }
   const M = A.map((row, i) => [...row, b[i]]);
   for (let col = 0; col < 8; col++) {
     let maxRow = col;
-    for (let row = col + 1; row < 8; row++)
+    for (let row = col+1; row < 8; row++)
       if (Math.abs(M[row][col]) > Math.abs(M[maxRow][col])) maxRow = row;
     [M[col], M[maxRow]] = [M[maxRow], M[col]];
-    const pivot = M[col][col];
-    if (Math.abs(pivot) < 1e-10) continue;
-    for (let j = col; j <= 8; j++) M[col][j] /= pivot;
+    const piv = M[col][col];
+    if (Math.abs(piv) < 1e-10) continue;
+    for (let j = col; j <= 8; j++) M[col][j] /= piv;
     for (let row = 0; row < 8; row++) {
       if (row === col) continue;
       const f = M[row][col];
@@ -91,42 +122,172 @@ function solveHomography(src: [number,number][], dst: [number,number][]): number
   return [...M.map(r => r[8]), 1];
 }
 
-function warpPerspective(srcCanvas: HTMLCanvasElement, quad: Quad, outW: number, outH: number): string {
+function warpPerspective(srcCanvas: HTMLCanvasElement, quad: Quad, outW = 1200, outH = 600): string {
   const W = srcCanvas.width, H = srcCanvas.height;
-  const srcPts = quad.map(({x,y}): [number,number] => [x * W, y * H]);
+  const srcPts = quad.map(({ x, y }): [number,number] => [x*W, y*H]);
   const dstPts: [number,number][] = [[0,0],[outW,0],[outW,outH],[0,outH]];
   const h = solveHomography(dstPts, srcPts);
 
-  const dst = document.createElement('canvas');
-  dst.width = outW; dst.height = outH;
-  const ctx = dst.getContext('2d')!;
-  const srcCtx = srcCanvas.getContext('2d')!;
-  const srcData = srcCtx.getImageData(0, 0, W, H);
-  const dstData = ctx.createImageData(outW, outH);
+  const out = document.createElement('canvas');
+  out.width = outW; out.height = outH;
+  const octx = out.getContext('2d')!;
+  const srcData = srcCanvas.getContext('2d')!.getImageData(0, 0, W, H);
+  const outData = octx.createImageData(outW, outH);
 
   for (let dy = 0; dy < outH; dy++) {
     for (let dx = 0; dx < outW; dx++) {
       const w2 = h[6]*dx + h[7]*dy + 1;
       const sx = Math.round((h[0]*dx + h[1]*dy + h[2]) / w2);
       const sy = Math.round((h[3]*dx + h[4]*dy + h[5]) / w2);
-      const di = (dy * outW + dx) * 4;
+      const di = (dy*outW + dx) * 4;
       if (sx >= 0 && sx < W && sy >= 0 && sy < H) {
-        const si = (sy * W + sx) * 4;
-        dstData.data[di]   = srcData.data[si];
-        dstData.data[di+1] = srcData.data[si+1];
-        dstData.data[di+2] = srcData.data[si+2];
-        dstData.data[di+3] = srcData.data[si+3];
+        const si = (sy*W + sx) * 4;
+        outData.data[di]   = srcData.data[si];
+        outData.data[di+1] = srcData.data[si+1];
+        outData.data[di+2] = srcData.data[si+2];
+        outData.data[di+3] = srcData.data[si+3];
       }
     }
   }
-  ctx.putImageData(dstData, 0, 0);
-  return dst.toDataURL('image/jpeg', 0.92);
+  octx.putImageData(outData, 0, 0);
+  return out.toDataURL('image/jpeg', 0.92);
 }
+
+// ─── VerifyStage component ────────────────────────────────────────────────────
+
+interface VerifyStageProps {
+  imageUri: string;
+  naturalW: number;
+  naturalH: number;
+  quad: Quad;
+  onQuadChange: (q: Quad) => void;
+}
+
+function VerifyStage({ imageUri, naturalW, naturalH, quad, onQuadChange }: VerifyStageProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
+  const [dragging, setDragging] = useState<number | null>(null);
+
+  useEffect(() => {
+    const obs = new ResizeObserver(() => {
+      if (containerRef.current)
+        setContainerSize({ w: containerRef.current.clientWidth, h: containerRef.current.clientHeight });
+    });
+    if (containerRef.current) obs.observe(containerRef.current);
+    return () => obs.disconnect();
+  }, []);
+
+  const imgRect = containerSize.w > 0 && naturalW > 0
+    ? getRenderedImageRect(containerSize.w, containerSize.h, naturalW, naturalH)
+    : { left: 0, top: 0, width: containerSize.w, height: containerSize.h };
+
+  const toScreen = (p: QuadPoint) => ({
+    x: imgRect.left + p.x * imgRect.width,
+    y: imgRect.top  + p.y * imgRect.height,
+  });
+
+  const toCanvas = useCallback((screenX: number, screenY: number): QuadPoint => ({
+    x: Math.max(0, Math.min(1, (screenX - imgRect.left) / imgRect.width)),
+    y: Math.max(0, Math.min(1, (screenY - imgRect.top)  / imgRect.height)),
+  }), [imgRect]);
+
+  const onPointerDown = (idx: number) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragging(idx);
+  };
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (dragging === null || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const pt = toCanvas(e.clientX - rect.left, e.clientY - rect.top);
+    onQuadChange(quad.map((p, i) => i === dragging ? pt : p) as Quad);
+  }, [dragging, quad, toCanvas, onQuadChange]);
+
+  const screenPts = quad.map(toScreen);
+  const polyPoints = screenPts.map(p => `${p.x},${p.y}`).join(' ');
+  const { w: cw, h: ch } = containerSize;
+  const HANDLE_R = 22;
+  const LABELS = ['TL', 'TR', 'BR', 'BL'];
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative w-full h-full bg-black overflow-hidden"
+      style={{ touchAction: 'none' }}
+      onPointerMove={onPointerMove}
+      onPointerUp={() => setDragging(null)}
+    >
+      {/* Captured frame */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={imageUri} alt="Captured" className="w-full h-full object-contain" draggable={false} />
+
+      {/* Overlay SVG */}
+      {cw > 0 && (
+        <svg className="absolute inset-0 pointer-events-none" width={cw} height={ch} viewBox={`0 0 ${cw} ${ch}`}>
+          <defs>
+            <mask id="qmask">
+              <rect width={cw} height={ch} fill="white" />
+              <polygon points={polyPoints} fill="black" />
+            </mask>
+          </defs>
+          {/* Darken outside quad */}
+          <rect width={cw} height={ch} fill="rgba(0,0,0,0.60)" mask="url(#qmask)" />
+          {/* Quad border */}
+          <polygon points={polyPoints} fill="none" stroke="#14b8a6" strokeWidth="2.5" strokeLinejoin="round" />
+          {/* Rule-of-thirds grid */}
+          {[1/3, 2/3].map(t => {
+            const [tl, tr, br, bl] = screenPts;
+            const vTop = { x: tl.x + (tr.x-tl.x)*t, y: tl.y + (tr.y-tl.y)*t };
+            const vBot = { x: bl.x + (br.x-bl.x)*t, y: bl.y + (br.y-bl.y)*t };
+            const hL   = { x: tl.x + (bl.x-tl.x)*t, y: tl.y + (bl.y-tl.y)*t };
+            const hR   = { x: tr.x + (br.x-tr.x)*t, y: tr.y + (br.y-tr.y)*t };
+            return (
+              <g key={t} opacity={0.3}>
+                <line x1={vTop.x} y1={vTop.y} x2={vBot.x} y2={vBot.y} stroke="#14b8a6" strokeWidth="1" />
+                <line x1={hL.x}  y1={hL.y}  x2={hR.x}  y2={hR.y}  stroke="#14b8a6" strokeWidth="1" />
+              </g>
+            );
+          })}
+        </svg>
+      )}
+
+      {/* Drag handles — div elements for reliable mobile touch */}
+      {cw > 0 && screenPts.map((sp, i) => (
+        <div
+          key={i}
+          onPointerDown={onPointerDown(i)}
+          className="absolute flex items-center justify-center rounded-full bg-teal-500 border-2 border-white shadow-xl font-mono font-black text-white select-none"
+          style={{
+            width:  HANDLE_R * 2,
+            height: HANDLE_R * 2,
+            left:   sp.x - HANDLE_R,
+            top:    sp.y - HANDLE_R,
+            fontSize: 10,
+            cursor: dragging === i ? 'grabbing' : 'grab',
+            touchAction: 'none',
+            zIndex: 10,
+          }}
+        >
+          {LABELS[i]}
+        </div>
+      ))}
+
+      {/* Instruction banner */}
+      <div className="absolute top-3 left-3 right-3 bg-teal-600/95 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 shadow-lg pointer-events-none">
+        <Info className="h-4 w-4 shrink-0" />
+        <p className="text-[11px] font-black uppercase tracking-wider">Drag corners to fit OPG boundary</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export function DentalVisionClient() {
   const [isMounted, setIsMounted] = useState(false);
   const [activeTab, setActiveTab] = useState('upload');
-  
+
   const [currentOriginalImage, setCurrentOriginalImage] = useState<string | null>(null);
   const [currentProcessedImage, setCurrentProcessedImage] = useState<string | null>(null);
   const [currentResults, setCurrentResults] = useState<AnalysisResults | null>(null);
@@ -134,23 +295,23 @@ export function DentalVisionClient() {
   const [hotspots, setHotspots] = useState<Hotspots | null>(null);
   const [selectedFindingIndex, setSelectedFindingIndex] = useState<number | null>(null);
   const [isAiRateLimited, setIsAiRateLimited] = useState(false);
-  
+
   const [isAnalyzing, startAnalysisTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Live AR state
   const [isLiveActive, setIsLiveActive] = useState(false);
   const [isProcessingLive, setIsProcessingLive] = useState(false);
   const [showLiveResults, setShowLiveResults] = useState(false);
   const [isVerifyingScan, setIsVerifyingScan] = useState(false);
   const [flash, setFlash] = useState(false);
-  
+
+  // Quad state
   const [quad, setQuad] = useState<Quad>([
-    { x: 0.07, y: 0.12 }, { x: 0.93, y: 0.12 },
-    { x: 0.93, y: 0.88 }, { x: 0.07, y: 0.88 },
+    { x: 0.05, y: 0.15 }, { x: 0.95, y: 0.15 },
+    { x: 0.95, y: 0.85 }, { x: 0.05, y: 0.85 },
   ]);
-  const [dragging, setDragging] = useState<number | null>(null);
-  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
-  const overlayContainerRef = useRef<HTMLDivElement>(null);
+  const [imgNaturalSize, setImgNaturalSize] = useState({ w: 0, h: 0 });
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -163,46 +324,20 @@ export function DentalVisionClient() {
     return () => stopLive();
   }, []);
 
-  useEffect(() => {
-    const obs = new ResizeObserver(() => {
-      if (overlayContainerRef.current)
-        setContainerSize({
-          w: overlayContainerRef.current.clientWidth,
-          h: overlayContainerRef.current.clientHeight,
-        });
-    });
-    if (overlayContainerRef.current) obs.observe(overlayContainerRef.current);
-    return () => obs.disconnect();
-  }, [isVerifyingScan]);
-
-  const compressImage = (dataUri: string, maxDim: number = 1200): Promise<string> => {
-    return new Promise((resolve) => {
+  const compressImage = (dataUri: string, maxDim = 1200): Promise<string> =>
+    new Promise(resolve => {
       const img = new window.Image();
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > maxDim) {
-            height *= maxDim / width;
-            width = maxDim;
-          }
-        } else {
-          if (height > maxDim) {
-            width *= maxDim / height;
-            height = maxDim;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
+        let { width, height } = img;
+        if (width > height) { if (width > maxDim) { height *= maxDim/width; width = maxDim; } }
+        else                { if (height > maxDim) { width *= maxDim/height; height = maxDim; } }
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d')?.drawImage(img, 0, 0, width, height);
         resolve(canvas.toDataURL('image/jpeg', 0.8));
       };
       img.src = dataUri;
     });
-  };
 
   const initCamera = async () => {
     try {
@@ -215,20 +350,18 @@ export function DentalVisionClient() {
       setShowLiveResults(false);
       setIsVerifyingScan(false);
       setCurrentProcessedImage(null);
-    } catch (e) {
-      toast({ variant: 'destructive', title: "Camera Access Denied", description: "Please allow camera access to use Live View Shoot." });
+    } catch {
+      toast({ variant: 'destructive', title: 'Camera Access Denied', description: 'Please allow camera access to use Live View Shoot.' });
     }
   };
 
   const stopLive = () => {
     setIsLiveActive(false);
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
   };
 
-  const processImage = async (dataUri: string, autoNav: boolean = true, originalFallbackUri?: string) => {
+  const processImage = async (dataUri: string, autoNav = true, originalFallbackUri?: string) => {
     setCurrentProcessedImage(null);
     setCurrentResults(null);
     setClinicalInsights(null);
@@ -239,7 +372,7 @@ export function DentalVisionClient() {
     try {
       const compressedUri = await compressImage(dataUri, 1200);
       let result = await runAnalysis({ radiographDataUri: compressedUri });
-      
+
       if (!result.success && originalFallbackUri) {
         const compressedFallback = await compressImage(originalFallbackUri, 1200);
         result = await runAnalysis({ radiographDataUri: compressedFallback });
@@ -248,110 +381,78 @@ export function DentalVisionClient() {
       if (result.success) {
         setCurrentProcessedImage(result.data.processedImage);
         setCurrentResults(result.data.results);
-        
+
         try {
           const [insights, locationData] = await Promise.all([
             getClinicalInsights({ originalImageDataUri: compressedUri, detections: result.data.results }),
             getFindingLocations({ processedRadiographDataUri: result.data.processedImage, findings: result.data.results })
           ]);
-          
-          if (!insights || !locationData) {
-             setIsAiRateLimited(true);
-          } else {
-            setClinicalInsights(insights);
-            setHotspots(locationData.hotspots);
-          }
-        } catch (genAiError) {
+          if (!insights || !locationData) setIsAiRateLimited(true);
+          else { setClinicalInsights(insights); setHotspots(locationData.hotspots); }
+        } catch {
           setIsAiRateLimited(true);
         }
-        
-        if (autoNav) {
-          setActiveTab('consult');
-        } else {
-          setShowLiveResults(true);
-        }
-        
-        toast({ title: "Analysis Complete", description: "Clinical findings have been mapped." });
+
+        if (autoNav) setActiveTab('consult');
+        else setShowLiveResults(true);
+        toast({ title: 'Analysis Complete', description: 'Clinical findings have been mapped.' });
       } else {
         const errorMsg = result.error.toLowerCase().includes('argmin')
-          ? "AI could not identify the dental arch. Please center the OPG and ensure it is well-lit."
+          ? 'AI could not identify the dental arch. Please centre the OPG and ensure it is well-lit.'
           : result.error;
-        toast({ variant: 'destructive', title: "Analysis Failed", description: errorMsg });
+        toast({ variant: 'destructive', title: 'Analysis Failed', description: errorMsg });
       }
     } catch (e: any) {
-      toast({ variant: 'destructive', title: "System Error", description: e.message || "A communication error occurred." });
+      toast({ variant: 'destructive', title: 'System Error', description: e.message || 'A communication error occurred.' });
     }
   };
 
+  // ── Capture: draw frame to canvas, auto-detect quad, show verify stage ──────
   const handleCapture = async () => {
     if (!videoRef.current || !canvasRef.current) return;
-
     setFlash(true);
     setTimeout(() => setFlash(false), 150);
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    canvas.width = video.videoWidth;
+    canvas.width  = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext('2d')!.drawImage(video, 0, 0);
 
     const rawUri = canvas.toDataURL('image/jpeg', 0.95);
     setCurrentOriginalImage(rawUri);
+    setImgNaturalSize({ w: canvas.width, h: canvas.height });
 
-    const detectedQuad = autoDetectOPG(canvas);
-    setQuad(detectedQuad);
+    // Client-side auto-detect — instant, no API call
+    const detected = autoDetectOPG(canvas);
+    setQuad(detected);
 
+    setIsProcessingLive(false);
     setIsVerifyingScan(true);
     stopLive();
   };
 
+  // ── Confirm: perspective-warp quad → send to API ─────────────────────────
   const startAnalysisFromVerified = () => {
-    if (!canvasRef.current || !currentOriginalImage) return;
-
+    if (!canvasRef.current) return;
     const warped = warpPerspective(canvasRef.current, quad, 1200, 600);
-
     startAnalysisTransition(async () => {
-      await processImage(warped, false, currentOriginalImage);
+      await processImage(warped, false, currentOriginalImage || undefined);
       setIsVerifyingScan(false);
     });
   };
 
+  // ── Reset quad to full frame ─────────────────────────────────────────────
   const useFullFrameInstead = () => {
-    setQuad([
-      { x: 0, y: 0 }, { x: 1, y: 0 },
-      { x: 1, y: 1 }, { x: 0, y: 1 },
-    ]);
-    toast({ title: "Full Frame Selected", description: "Quad set to full image. Adjust handles if needed." });
-  };
-
-  const getRelativeXY = (e: React.PointerEvent): [number, number] => {
-    const rect = overlayContainerRef.current!.getBoundingClientRect();
-    return [
-      Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
-      Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
-    ];
-  };
-
-  const onHandlePointerDown = (idx: number) => (e: React.PointerEvent) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setDragging(idx);
-  };
-
-  const onOverlayPointerMove = (e: React.PointerEvent) => {
-    if (dragging === null) return;
-    const [nx, ny] = getRelativeXY(e);
-    setQuad(prev => {
-      const next = [...prev] as Quad;
-      next[dragging] = { x: nx, y: ny };
-      return next;
-    });
+    setQuad([{ x:0,y:0 },{ x:1,y:0 },{ x:1,y:1 },{ x:0,y:1 }]);
+    toast({ title: 'Full frame selected', description: 'Adjust handles if needed, then confirm.' });
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = event => {
         const dataUri = event.target?.result as string;
         setCurrentOriginalImage(dataUri);
         setCurrentResults(null);
@@ -369,24 +470,21 @@ export function DentalVisionClient() {
   };
 
   const startUploadAnalysis = () => {
-    if (currentOriginalImage) {
-      startAnalysisTransition(async () => {
-        await processImage(currentOriginalImage, true);
-      });
-    }
+    if (currentOriginalImage)
+      startAnalysisTransition(async () => { await processImage(currentOriginalImage, true); });
   };
 
   const selectedExplanation = useMemo(() => {
     if (!clinicalInsights || selectedFindingIndex === null || !currentResults) return null;
     const disease = currentResults[selectedFindingIndex].disease.toLowerCase();
-    return clinicalInsights.pathologyExplanation.find(p => 
+    return clinicalInsights.pathologyExplanation.find(p =>
       p.condition.toLowerCase().includes(disease) || disease.includes(p.condition.toLowerCase())
     );
   }, [clinicalInsights, selectedFindingIndex, currentResults]);
 
   if (!isMounted) return null;
 
-  const LoadingOverlay = ({ label = "Analyzing Radiograph" }: { label?: string }) => (
+  const LoadingOverlay = ({ label = 'Analyzing Radiograph' }: { label?: string }) => (
     <div className="absolute inset-0 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center z-50 animate-in fade-in duration-300">
       <div className="relative mb-8">
         <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
@@ -414,29 +512,33 @@ export function DentalVisionClient() {
     <div className="space-y-4 max-w-5xl mx-auto pb-20 px-2 sm:px-0">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-3 mb-4 h-11 bg-muted/50 rounded-lg p-1">
-          <TabsTrigger value="upload" onClick={stopLive} className="text-[11px] sm:text-sm font-bold uppercase"><Upload className="mr-2 h-4 w-4 hidden sm:block" />Upload</TabsTrigger>
-          <TabsTrigger value="live" onClick={initCamera} className="text-[11px] sm:text-sm font-bold uppercase"><Camera className="mr-2 h-4 w-4 hidden sm:block" />Live View Shoot</TabsTrigger>
-          <TabsTrigger value="consult" disabled={!currentResults} className="text-[11px] sm:text-sm font-bold uppercase"><Sparkles className="mr-2 h-4 w-4 hidden sm:block" />AI Consult</TabsTrigger>
+          <TabsTrigger value="upload" onClick={stopLive} className="text-[11px] sm:text-sm font-bold uppercase">
+            <Upload className="mr-2 h-4 w-4 hidden sm:block" />Upload
+          </TabsTrigger>
+          <TabsTrigger value="live" onClick={initCamera} className="text-[11px] sm:text-sm font-bold uppercase">
+            <Camera className="mr-2 h-4 w-4 hidden sm:block" />Live View Shoot
+          </TabsTrigger>
+          <TabsTrigger value="consult" disabled={!currentResults} className="text-[11px] sm:text-sm font-bold uppercase">
+            <Sparkles className="mr-2 h-4 w-4 hidden sm:block" />AI Consult
+          </TabsTrigger>
         </TabsList>
 
+        {/* ── UPLOAD TAB ── */}
         <TabsContent value="upload">
           <Card className="border-primary/10 shadow-xl rounded-2xl overflow-hidden relative">
             <CardContent className="p-4 sm:p-8">
-              <div 
+              <div
                 onClick={() => !currentOriginalImage && !isAnalyzing && fileInputRef.current?.click()}
                 className={cn(
-                  "w-full aspect-video sm:aspect-[16/7] border-2 border-dashed rounded-2xl flex flex-col items-center justify-center transition-all group overflow-hidden relative",
-                  currentOriginalImage ? "border-primary/40 bg-primary/5 cursor-default" : "border-primary/20 cursor-pointer hover:bg-primary/5"
+                  'w-full aspect-video sm:aspect-[16/7] border-2 border-dashed rounded-2xl flex flex-col items-center justify-center transition-all group overflow-hidden relative',
+                  currentOriginalImage ? 'border-primary/40 bg-primary/5 cursor-default' : 'border-primary/20 cursor-pointer hover:bg-primary/5'
                 )}
               >
                 {currentOriginalImage ? (
                   <>
                     <Image src={currentOriginalImage} alt="Uploaded OPG" fill className="object-contain p-2" />
                     {!isAnalyzing && (
-                      <button 
-                        onClick={clearUpload}
-                        className="absolute top-4 right-4 h-10 w-10 bg-background/80 backdrop-blur shadow-md rounded-full flex items-center justify-center hover:bg-destructive hover:text-white transition-colors z-20"
-                      >
+                      <button onClick={clearUpload} className="absolute top-4 right-4 h-10 w-10 bg-background/80 backdrop-blur shadow-md rounded-full flex items-center justify-center hover:bg-destructive hover:text-white transition-colors z-20">
                         <XCircle className="h-6 w-6" />
                       </button>
                     )}
@@ -453,27 +555,19 @@ export function DentalVisionClient() {
               </div>
 
               {isAnalyzing && <LoadingOverlay />}
-
               <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
-              
+
               {!currentResults && (
                 <div className="mt-6 space-y-4">
                   {!currentOriginalImage ? (
                     <Button disabled={isAnalyzing} className="w-full h-16 rounded-xl text-lg font-black" onClick={() => fileInputRef.current?.click()}>
-                      <ScanLine className="mr-2" />
-                      CHOOSE FILE
+                      <ScanLine className="mr-2" />CHOOSE FILE
                     </Button>
                   ) : (
-                    <div className="flex flex-col gap-3">
-                      <Button 
-                        disabled={isAnalyzing} 
-                        className="w-full h-20 rounded-xl text-xl font-black shadow-2xl shadow-primary/30" 
-                        onClick={startUploadAnalysis}
-                      >
-                        {isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <Bot className="mr-3 h-6 w-6" />}
-                        START CLINICAL ANALYSIS
-                      </Button>
-                    </div>
+                    <Button disabled={isAnalyzing} className="w-full h-20 rounded-xl text-xl font-black shadow-2xl shadow-primary/30" onClick={startUploadAnalysis}>
+                      {isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <Bot className="mr-3 h-6 w-6" />}
+                      START CLINICAL ANALYSIS
+                    </Button>
                   )}
                 </div>
               )}
@@ -481,85 +575,59 @@ export function DentalVisionClient() {
           </Card>
         </TabsContent>
 
+        {/* ── LIVE AR TAB ── */}
         <TabsContent value="live">
           <Card className="border-primary/10 shadow-2xl overflow-hidden rounded-2xl">
             <CardContent className="p-0 relative">
-              <div className="relative aspect-video sm:aspect-video bg-black flex items-center justify-center overflow-hidden">
-                {!showLiveResults && !isVerifyingScan ? (
+
+              {/* ── Viewfinder area ── */}
+              <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
+
+                {/* Live camera preview */}
+                {!isVerifyingScan && !showLiveResults && (
                   <>
                     <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+                    {/* Corner guide brackets */}
                     <div className="absolute inset-0 border-[20px] sm:border-[40px] border-black/50 pointer-events-none">
                       <div className="w-full h-full border-2 border-primary/20 rounded-lg relative overflow-hidden">
-                        <div className="absolute top-4 left-4 text-primary/60"><CornerUpLeft className="h-12 w-12" /></div>
-                        <div className="absolute top-4 right-4 text-primary/60"><CornerUpRight className="h-12 w-12" /></div>
-                        <div className="absolute bottom-4 left-4 text-primary/60"><CornerDownLeft className="h-12 w-12" /></div>
-                        <div className="absolute bottom-4 right-4 text-primary/60"><CornerDownRight className="h-12 w-12" /></div>
                         <div className="absolute inset-0 flex flex-col items-center justify-center opacity-20">
-                            <Target className="h-16 w-16 text-primary" />
-                            <p className="mt-2 text-[10px] font-black uppercase tracking-widest">Targeting OPG...</p>
+                          <Target className="h-16 w-16 text-primary" />
+                          <p className="mt-2 text-[10px] font-black uppercase tracking-widest">Align OPG within frame</p>
                         </div>
                       </div>
                     </div>
                   </>
-                ) : isVerifyingScan && currentOriginalImage ? (
-                  <div
-                    ref={overlayContainerRef}
-                    className="relative w-full h-full bg-black"
-                    style={{ touchAction: 'none' }}
-                    onPointerMove={onOverlayPointerMove}
-                    onPointerUp={() => setDragging(null)}
-                  >
-                    <img
-                      src={currentOriginalImage}
-                      alt="Captured"
-                      className="w-full h-full object-contain"
-                    />
+                )}
 
-                    {containerSize.w > 0 && (() => {
-                      const { w, h } = containerSize;
-                      const pts = quad.map(p => `${p.x * w},${p.y * h}`).join(' ');
-                      const HANDLE_R = 20;
-                      const LABELS = ['TL','TR','BR','BL'];
-                      return (
-                        <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 ${w} ${h}`}>
-                          <defs>
-                            <mask id="qmask">
-                              <rect width="100%" height="100%" fill="white" />
-                              <polygon points={pts} fill="black" />
-                            </mask>
-                          </defs>
-                          <rect width="100%" height="100%" fill="rgba(0,0,0,0.55)" mask="url(#qmask)" />
-                          <polygon points={pts} fill="none" stroke="#14b8a6" strokeWidth="2" />
-                          {quad.map((p, i) => (
-                            <g key={i} onPointerDown={onHandlePointerDown(i)} style={{ cursor: 'grab' }}>
-                              <circle cx={p.x*w} cy={p.y*h} r={HANDLE_R+10} fill="transparent" />
-                              <circle cx={p.x*w} cy={p.y*h} r={HANDLE_R} fill="#14b8a6" fillOpacity={0.9} stroke="white" strokeWidth="2" />
-                              <text x={p.x*w} y={p.y*h+4} textAnchor="middle" fill="white" fontSize={10} fontFamily="monospace" fontWeight="bold" style={{pointerEvents:'none'}}>
-                                {LABELS[i]}
-                              </text>
-                            </g>
-                          ))}
-                        </svg>
-                      );
-                    })()}
+                {/* ── Verify stage: quad handles ── */}
+                {isVerifyingScan && currentOriginalImage && (
+                  <VerifyStage
+                    imageUri={currentOriginalImage}
+                    naturalW={imgNaturalSize.w}
+                    naturalH={imgNaturalSize.h}
+                    quad={quad}
+                    onQuadChange={setQuad}
+                  />
+                )}
 
-                    <div className="absolute top-3 left-3 right-3 bg-primary/90 text-primary-foreground p-3 rounded-xl flex items-center gap-2 shadow-lg pointer-events-none">
-                      <Info className="h-4 w-4 shrink-0" />
-                      <p className="text-[10px] font-black uppercase tracking-wider">Drag corners to fit OPG boundary</p>
-                    </div>
-                  </div>
-                ) : showLiveResults && currentProcessedImage ? (
-                  <div className="relative w-full h-full animate-in zoom-in-95 duration-500 bg-black flex items-center justify-center">
+                {/* Results preview */}
+                {showLiveResults && currentProcessedImage && (
+                  <div className="relative w-full h-full bg-black flex items-center justify-center animate-in zoom-in-95 duration-500">
                     <div className="relative w-full aspect-video">
                       <Image src={currentProcessedImage} alt="AR Findings" fill className="object-contain" />
                     </div>
                   </div>
-                ) : null}
-                
-                {flash && <div className="absolute inset-0 bg-white z-[60] animate-out fade-out duration-300" />}
-                
-                {(isAnalyzing || isProcessingLive) && <LoadingOverlay label={isProcessingLive ? "Isolating OPG..." : "Analyzing Radiograph"} />}
+                )}
 
+                {/* Flash */}
+                {flash && <div className="absolute inset-0 bg-white z-[60] animate-out fade-out duration-300" />}
+
+                {/* Loading overlays */}
+                {(isAnalyzing || isProcessingLive) && (
+                  <LoadingOverlay label={isProcessingLive ? 'Isolating OPG...' : 'Analyzing Radiograph'} />
+                )}
+
+                {/* Start camera prompt */}
                 {!isLiveActive && !isVerifyingScan && !showLiveResults && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md">
                     <Button onClick={initCamera} size="lg" className="h-16 px-10 rounded-full font-black">
@@ -569,19 +637,34 @@ export function DentalVisionClient() {
                 )}
               </div>
 
+              {/* ── Action buttons ── */}
               <div className="p-4 bg-background border-t">
-                {isLiveActive ? (
+                {isLiveActive && !isVerifyingScan && (
                   <>
-                    <Button onClick={handleCapture} disabled={isProcessingLive || !isLiveActive} size="lg" className="w-full h-20 text-xl font-black rounded-2xl shadow-xl transition-all active:scale-95">
+                    <Button
+                      onClick={handleCapture}
+                      disabled={isProcessingLive || !isLiveActive}
+                      size="lg"
+                      className="w-full h-20 text-xl font-black rounded-2xl shadow-xl transition-all active:scale-95"
+                    >
                       {isProcessingLive ? <Loader2 className="animate-spin mr-2" /> : <ScanLine className="mr-3 h-7 w-7" />}
                       CAPTURE & SCAN
                     </Button>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-center mt-3 text-muted-foreground opacity-60">Align OPG within the corner brackets</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-center mt-3 text-muted-foreground opacity-60">
+                      Align OPG within the corner brackets
+                    </p>
                   </>
-                ) : isVerifyingScan ? (
+                )}
+
+                {isVerifyingScan && (
                   <div className="space-y-3 animate-in slide-in-from-bottom-4">
-                    <Button onClick={startAnalysisFromVerified} size="lg" className="w-full h-20 text-lg font-black rounded-2xl shadow-2xl bg-primary">
-                      <CheckCircle2 className="mr-3 h-6 w-6" />
+                    <Button
+                      onClick={startAnalysisFromVerified}
+                      disabled={isAnalyzing}
+                      size="lg"
+                      className="w-full h-20 text-lg font-black rounded-2xl shadow-2xl bg-primary"
+                    >
+                      {isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle2 className="mr-3 h-6 w-6" />}
                       CONFIRM & ANALYZE
                     </Button>
                     <div className="flex gap-2">
@@ -593,7 +676,9 @@ export function DentalVisionClient() {
                       </Button>
                     </div>
                   </div>
-                ) : showLiveResults ? (
+                )}
+
+                {showLiveResults && (
                   <div className="space-y-4 animate-in slide-in-from-bottom-4 duration-500">
                     <div className="flex items-center justify-between gap-3 px-1">
                       <div className="flex flex-col">
@@ -604,20 +689,21 @@ export function DentalVisionClient() {
                         <RefreshCcw className="mr-2 h-3 w-3" /> NEW SCAN
                       </Button>
                     </div>
-                    
                     <Button onClick={() => setActiveTab('consult')} size="lg" className="w-full h-20 text-lg font-black rounded-2xl shadow-2xl bg-primary">
                       <Sparkles className="mr-3 h-6 w-6" />
                       START AI TUTORING DEEP-DIVE
                       <ArrowRight className="ml-2 h-5 w-5" />
                     </Button>
                   </div>
-                ) : null}
+                )}
               </div>
+
               <canvas ref={canvasRef} className="hidden" />
             </CardContent>
           </Card>
         </TabsContent>
 
+        {/* ── AI CONSULT TAB ── */}
         <TabsContent value="consult">
           <div className="grid md:grid-cols-12 gap-4 items-start">
             <div className="md:col-span-7 space-y-4">
@@ -638,13 +724,11 @@ export function DentalVisionClient() {
                             {hotspots.map((h, i) => (
                               <rect
                                 key={i}
-                                x={h.box[0]}
-                                y={h.box[1]}
-                                width={h.box[2] - h.box[0]}
-                                height={h.box[3] - h.box[1]}
+                                x={h.box[0]} y={h.box[1]}
+                                width={h.box[2] - h.box[0]} height={h.box[3] - h.box[1]}
                                 className={cn(
-                                  "fill-primary/0 stroke-2 cursor-pointer transition-all",
-                                  selectedFindingIndex === i ? "stroke-yellow-400 fill-yellow-400/30" : "stroke-transparent hover:stroke-white/60"
+                                  'fill-primary/0 stroke-2 cursor-pointer transition-all',
+                                  selectedFindingIndex === i ? 'stroke-yellow-400 fill-yellow-400/30' : 'stroke-transparent hover:stroke-white/60'
                                 )}
                                 onClick={() => setSelectedFindingIndex(i)}
                               />
@@ -660,14 +744,11 @@ export function DentalVisionClient() {
               {currentResults && (
                 <div className="flex flex-wrap gap-2">
                   {currentResults.map((r, i) => (
-                    <Badge 
-                      key={i} 
+                    <Badge
+                      key={i}
                       onClick={() => setSelectedFindingIndex(i)}
-                      variant={selectedFindingIndex === i ? "default" : "secondary"}
-                      className={cn(
-                        "px-4 py-2 text-[10px] font-black cursor-pointer shadow-md",
-                        selectedFindingIndex === i && "border-2 border-yellow-400"
-                      )}
+                      variant={selectedFindingIndex === i ? 'default' : 'secondary'}
+                      className={cn('px-4 py-2 text-[10px] font-black cursor-pointer shadow-md', selectedFindingIndex === i && 'border-2 border-yellow-400')}
                     >
                       {r.disease.toUpperCase()} ({r.tooth_numbers.join(', ')})
                     </Badge>
@@ -707,7 +788,6 @@ export function DentalVisionClient() {
                         <h4 className="text-[10px] font-black uppercase text-primary/60 tracking-widest mb-4">
                           {selectedFindingIndex !== null ? 'Finding Insight' : 'Select a Finding'}
                         </h4>
-                        
                         {selectedFindingIndex !== null && selectedExplanation ? (
                           <div className="animate-in fade-in duration-300">
                             <h5 className="font-black text-sm mb-2 text-foreground flex items-center justify-between">
@@ -745,11 +825,11 @@ export function DentalVisionClient() {
                       </div>
                     </div>
                   ) : (
-                     <div className="flex flex-col items-center justify-center text-center py-20 opacity-40">
-                        <HelpCircle className="h-12 w-12 mb-4" />
-                        <p className="text-sm font-bold uppercase">Tutoring Unavailable</p>
-                        <p className="text-[10px]">AI resources are currently exhausted. Please try again in 1 minute.</p>
-                     </div>
+                    <div className="flex flex-col items-center justify-center text-center py-20 opacity-40">
+                      <HelpCircle className="h-12 w-12 mb-4" />
+                      <p className="text-sm font-bold uppercase">Tutoring Unavailable</p>
+                      <p className="text-[10px]">AI resources are currently exhausted. Please try again in 1 minute.</p>
+                    </div>
                   )}
                 </CardContent>
               </Card>
