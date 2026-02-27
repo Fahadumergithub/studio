@@ -47,67 +47,91 @@ function getRenderedImageRect(
 
 // ─── Auto-detect OPG ─────────────────────────────────────────────────────────
 
-function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
-  // Fallback: wide centre crop
-  const fallback: Quad = [
-    { x: 0.05, y: 0.15 }, { x: 0.95, y: 0.15 },
-    { x: 0.95, y: 0.85 }, { x: 0.05, y: 0.85 },
-  ];
+const FALLBACK_QUAD: Quad = [
+  { x: 0.05, y: 0.10 }, { x: 0.95, y: 0.10 },
+  { x: 0.95, y: 0.90 }, { x: 0.05, y: 0.90 },
+];
 
-  if (!srcCanvas || srcCanvas.width === 0 || srcCanvas.height === 0) {
-    return fallback;
+function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
+  // Guard: canvas must have valid pixel data
+  if (!srcCanvas || srcCanvas.width < 4 || srcCanvas.height < 4) return FALLBACK_QUAD;
+
+  const SCALE = 0.25;
+  const tmp = document.createElement('canvas');
+  tmp.width  = Math.max(1, Math.round(srcCanvas.width  * SCALE));
+  tmp.height = Math.max(1, Math.round(srcCanvas.height * SCALE));
+
+  let ctx: CanvasRenderingContext2D | null;
+  try {
+    ctx = tmp.getContext('2d');
+    if (!ctx) return FALLBACK_QUAD;
+    ctx.drawImage(srcCanvas, 0, 0, tmp.width, tmp.height);
+  } catch {
+    return FALLBACK_QUAD;
   }
 
-  try {
-    const SCALE = 0.25;
-    const tmp = document.createElement('canvas');
-    tmp.width  = Math.round(srcCanvas.width  * SCALE);
-    tmp.height = Math.round(srcCanvas.height * SCALE);
-    
-    if (tmp.width === 0 || tmp.height === 0) return fallback;
+  const { data, width, height } = ctx.getImageData(0, 0, tmp.width, tmp.height);
+  const lums = new Uint8Array(width * height);
 
-    const ctx = tmp.getContext('2d');
-    if (!ctx) return fallback;
+  let total = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const l = (data[i]*77 + data[i+1]*150 + data[i+2]*29) >> 8;
+    lums[i >> 2] = l;
+    total += l;
+  }
+  const mean = total / lums.length;
 
-    ctx.drawImage(srcCanvas, 0, 0, tmp.width, tmp.height);
-    const { data, width, height } = ctx.getImageData(0, 0, tmp.width, tmp.height);
+  // Try BOTH modes: OPG darker than background (classic), or lighter (screen glow)
+  // Run both and pick whichever gives a more reasonable bounding box
+  const pad = 0.02;
 
-    let total = 0;
-    for (let i = 0; i < data.length; i += 4)
-      total += (data[i] * 77 + data[i+1] * 150 + data[i+2] * 29) >> 8;
-    const mean = total / (width * height);
-    const threshold = Math.max(20, mean - 35);
-
+  function findBBox(targetDark: boolean): { minX:number; maxX:number; minY:number; maxY:number; count:number } {
+    // For dark OPG: pixels significantly below mean
+    // For light OPG: pixels significantly above mean
+    const threshold = targetDark ? mean - 30 : mean + 30;
     let minX = width, maxX = 0, minY = height, maxY = 0, count = 0;
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const idx = (y * width + x) * 4;
-        const lum = (data[idx]*77 + data[idx+1]*150 + data[idx+2]*29) >> 8;
-        if (lum < threshold) {
+        const l = lums[y * width + x];
+        const match = targetDark ? l < threshold : l > threshold;
+        if (match) {
           minX = Math.min(minX, x); maxX = Math.max(maxX, x);
           minY = Math.min(minY, y); maxY = Math.max(maxY, y);
           count++;
         }
       }
     }
-
-    const area = (maxX - minX) * (maxY - minY);
-    const frameArea = width * height;
-    const pad = 0.025;
-
-    if (count > 200 && area > frameArea * 0.04 && area < frameArea * 0.97) {
-      return [
-        { x: Math.max(0, minX/width  - pad), y: Math.max(0, minY/height - pad) },
-        { x: Math.min(1, maxX/width  + pad), y: Math.max(0, minY/height - pad) },
-        { x: Math.min(1, maxX/width  + pad), y: Math.min(1, maxY/height + pad) },
-        { x: Math.max(0, minX/width  - pad), y: Math.min(1, maxY/height + pad) },
-      ];
-    }
-  } catch (e) {
-    console.error("Auto-detect error:", e);
+    return { minX, maxX, minY, maxY, count };
   }
-  
-  return fallback;
+
+  function scoreBox(b: ReturnType<typeof findBBox>): number {
+    if (b.count < 150) return 0;
+    const area = (b.maxX - b.minX) * (b.maxY - b.minY);
+    const frameArea = width * height;
+    if (area < frameArea * 0.03 || area > frameArea * 0.96) return 0;
+    // Prefer boxes that are landscape-ish (OPG aspect ratio ~2:1)
+    const aspect = (b.maxX - b.minX) / Math.max(1, b.maxY - b.minY);
+    const aspectScore = aspect > 1.0 ? 1.0 : 0.5; // reward landscape boxes
+    return (area / frameArea) * aspectScore;
+  }
+
+  const darkBox  = findBBox(true);
+  const lightBox = findBBox(false);
+  const darkScore  = scoreBox(darkBox);
+  const lightScore = scoreBox(lightBox);
+
+  const best = darkScore >= lightScore ? darkBox : lightBox;
+
+  if (scoreBox(best) > 0) {
+    return [
+      { x: Math.max(0, best.minX/width  - pad), y: Math.max(0, best.minY/height - pad) },
+      { x: Math.min(1, best.maxX/width  + pad), y: Math.max(0, best.minY/height - pad) },
+      { x: Math.min(1, best.maxX/width  + pad), y: Math.min(1, best.maxY/height + pad) },
+      { x: Math.max(0, best.minX/width  - pad), y: Math.min(1, best.maxY/height + pad) },
+    ];
+  }
+
+  return FALLBACK_QUAD;
 }
 
 // ─── Perspective warp ─────────────────────────────────────────────────────────
@@ -366,6 +390,7 @@ export function DentalVisionClient() {
       setShowLiveResults(false);
       setIsVerifyingScan(false);
       setCurrentProcessedImage(null);
+      setImgNaturalSize({ w: 0, h: 0 }); // reset so container goes back to camera ratio
     } catch {
       toast({ variant: 'destructive', title: 'Camera Access Denied', description: 'Please allow camera access to use Live View Shoot.' });
     }
@@ -426,39 +451,53 @@ export function DentalVisionClient() {
   // ── Capture: draw frame to canvas, auto-detect quad, show verify stage ──────
   const handleCapture = async () => {
     if (!videoRef.current || !canvasRef.current) return;
-    
-    const video = videoRef.current;
-    if (video.videoWidth === 0 || video.videoHeight === 0) return;
-
     setFlash(true);
     setTimeout(() => setFlash(false), 150);
 
+    const video = videoRef.current;
     const canvas = canvasRef.current;
-    canvas.width  = video.videoWidth;
-    canvas.height = video.videoHeight;
+
+    // Capture BEFORE stopping the stream
+    canvas.width  = video.videoWidth  || 1280;
+    canvas.height = video.videoHeight || 720;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
     ctx.drawImage(video, 0, 0);
+
+    // Stop camera AFTER we've drawn the frame
+    stopLive();
 
     const rawUri = canvas.toDataURL('image/jpeg', 0.95);
     setCurrentOriginalImage(rawUri);
     setImgNaturalSize({ w: canvas.width, h: canvas.height });
 
-    // Client-side auto-detect — instant, no API call
+    // Auto-detect while canvas still has valid pixel data
     const detected = autoDetectOPG(canvas);
     setQuad(detected);
 
     setIsProcessingLive(false);
     setIsVerifyingScan(true);
-    stopLive();
   };
 
-  // ── Confirm: perspective-warp quad → send to API ─────────────────────────
+  // ── Confirm: reload capture → perspective-warp quad → send to API ────────
   const startAnalysisFromVerified = () => {
-    if (!canvasRef.current) return;
-    const warped = warpPerspective(canvasRef.current, quad, 1200, 600);
+    if (!currentOriginalImage || !canvasRef.current) return;
+
     startAnalysisTransition(async () => {
+      // Re-draw the captured image back onto canvas (in case canvas was cleared)
+      await new Promise<void>(resolve => {
+        const img = new window.Image();
+        img.onload = () => {
+          const canvas = canvasRef.current!;
+          canvas.width  = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          canvas.getContext('2d')!.drawImage(img, 0, 0);
+          resolve();
+        };
+        img.src = currentOriginalImage!;
+      });
+
+      const warped = warpPerspective(canvasRef.current!, quad, 1200, 600);
       await processImage(warped, false, currentOriginalImage || undefined);
       setIsVerifyingScan(false);
     });
@@ -602,8 +641,19 @@ export function DentalVisionClient() {
           <Card className="border-primary/10 shadow-2xl overflow-hidden rounded-2xl">
             <CardContent className="p-0 relative">
 
-              {/* ── Viewfinder area ── */}
-              <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
+              {/* ── Viewfinder area — height adapts to portrait or landscape capture ── */}
+              <div
+                className="relative bg-black flex items-center justify-center overflow-hidden"
+                style={{
+                  // During verify: match captured image orientation naturally
+                  // Portrait capture → taller box; Landscape → wider box
+                  // Clamp between 56vw (landscape min) and 90vw (portrait max)
+                  height: isVerifyingScan && imgNaturalSize.w > 0
+                    ? `clamp(56vw, ${Math.round((imgNaturalSize.h / imgNaturalSize.w) * 100)}vw, 90vw)`
+                    : '56vw', // default 16:9-ish for live camera
+                  maxHeight: '75vh',
+                }}
+              >
 
                 {/* Live camera preview */}
                 {!isVerifyingScan && !showLiveResults && (
