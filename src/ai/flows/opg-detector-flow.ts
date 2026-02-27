@@ -41,7 +41,7 @@ PRECISION EXTRACTION RULES:
    - Any browser UI, tabs, URL bars, or window minimize/maximize buttons.
    - Hospital logos, patient names, or date text appearing OUTSIDE the film frame.
    - Desks, lightboxes, or room reflections.
-3. LANDSCAPE RATIO: OPGs are naturally wide. If the bounding box is not a wide landscape rectangle (width > height), you have likely failed. Re-evaluate to find the wide film frame.
+3. LANDSCAPE RATIO: OPGs are naturally wide. If the bounding box is not a wide landscape rectangle (width > height), you have likely failed. Re-evaluate to find the wide film frame. Even if the photo is taken in portrait mode, the identified film rectangle MUST be landscape.
 4. TIGHTEST POSSIBLE CROP: Shrink the bounding box inward until it touches only the teeth and jaw structure.
 
 Image: {{media url=imageDataUri}}`,
