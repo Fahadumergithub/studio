@@ -396,7 +396,9 @@ export function DentalVisionClient() {
                   </>
                 ) : isVerifyingScan && verifiedScanUri ? (
                   <div className="relative w-full h-full animate-in fade-in duration-500 bg-background/5">
-                    <Image src={verifiedScanUri} alt="Verify Scan" fill className="object-contain p-4" />
+                    <div className="relative w-full aspect-video">
+                        <Image src={verifiedScanUri} alt="Verify Scan" fill className="object-contain p-4" />
+                    </div>
                     <div className="absolute top-4 left-4 right-4 bg-primary/90 text-primary-foreground p-3 rounded-xl flex items-center gap-3 shadow-lg">
                       <Info className="h-5 w-5" />
                       <p className="text-xs font-black uppercase">Verify isolated radiograph frame</p>
