@@ -2,7 +2,7 @@
 
 import { useState, useRef, useTransition, useEffect, useMemo } from 'react';
 import Image from 'next/image';
-import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle, RefreshCcw, ArrowRight } from 'lucide-react';
+import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle, RefreshCcw, ArrowRight, CornerUpLeft, CornerUpRight, CornerDownLeft, CornerDownRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -188,7 +188,7 @@ export function DentalVisionClient() {
         if (opg.isOpg && opg.boundingBox) {
           const { x, y, width, height } = opg.boundingBox;
           
-          // Refined Sanitization: Ensure crop is substantial and valid
+          // Cam Scanner Refinement: Ensure crop is clinical data area
           const sx = Math.max(0, Math.min(1, x));
           const sy = Math.max(0, Math.min(1, y));
           const sw = Math.max(0.1, Math.min(1 - sx, width));
@@ -206,7 +206,7 @@ export function DentalVisionClient() {
           finalUri = cropCanvas.toDataURL('image/jpeg', 0.95);
         }
       } catch (opgError) {
-        console.warn('Isolation failed, falling back to full frame:', opgError);
+        console.warn('Cam Scanner isolation failed, falling back to full frame:', opgError);
       }
 
       const clinicalReadyUri = await compressImage(finalUri, 1200);
@@ -370,12 +370,25 @@ export function DentalVisionClient() {
                 {!showLiveResults ? (
                   <>
                     <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 border-[30px] border-black/40 pointer-events-none">
-                      <div className="w-full h-full border-2 border-primary/40 rounded-lg relative overflow-hidden">
-                        <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-primary rounded-tl-sm" />
-                        <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-primary rounded-tr-sm" />
-                        <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-primary rounded-bl-sm" />
-                        <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-primary rounded-br-sm" />
+                    <div className="absolute inset-0 border-[20px] sm:border-[40px] border-black/50 pointer-events-none">
+                      <div className="w-full h-full border-2 border-primary/20 rounded-lg relative overflow-hidden">
+                        <div className="absolute top-4 left-4 text-primary/60 flex flex-col items-center">
+                            <CornerUpLeft className="h-12 w-12" />
+                        </div>
+                        <div className="absolute top-4 right-4 text-primary/60 flex flex-col items-center">
+                            <CornerUpRight className="h-12 w-12" />
+                        </div>
+                        <div className="absolute bottom-4 left-4 text-primary/60 flex flex-col items-center">
+                            <CornerDownLeft className="h-12 w-12" />
+                        </div>
+                        <div className="absolute bottom-4 right-4 text-primary/60 flex flex-col items-center">
+                            <CornerDownRight className="h-12 w-12" />
+                        </div>
+                        
+                        <div className="absolute inset-0 flex flex-col items-center justify-center opacity-20">
+                            <Target className="h-16 w-16 text-primary" />
+                            <p className="mt-2 text-[10px] font-black uppercase tracking-widest">Targeting OPG...</p>
+                        </div>
                       </div>
                     </div>
                   </>
@@ -406,20 +419,20 @@ export function DentalVisionClient() {
                 {!showLiveResults ? (
                   <>
                     <Button onClick={handleCapture} disabled={isProcessingLive || !isLiveActive || isAnalyzing} size="lg" className="w-full h-20 text-xl font-black rounded-2xl shadow-xl transition-all active:scale-95">
-                      {isProcessingLive || isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <Target className="mr-3 h-7 w-7" />}
-                      CAPTURE & ANALYZE
+                      {isProcessingLive || isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <ScanLine className="mr-3 h-7 w-7" />}
+                      CAPTURE & SCAN
                     </Button>
                     <div className="flex items-center justify-center gap-2 mt-4 text-muted-foreground opacity-60">
                       <Info className="h-3 w-3" />
-                      <p className="text-[10px] font-black uppercase tracking-widest text-center">Isolate clinical frame for precision</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-center">Cam Scanner Mode: Isolating X-Ray frame</p>
                     </div>
                   </>
                 ) : (
                   <div className="space-y-4 animate-in slide-in-from-bottom-4 duration-500">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex flex-col">
-                        <h4 className="text-xs font-black uppercase text-primary">In-Situ Analysis Complete</h4>
-                        <p className="text-[10px] text-muted-foreground uppercase font-bold">{currentResults?.length || 0} Findings Identified</p>
+                        <h4 className="text-xs font-black uppercase text-primary">Scanner Analysis Complete</h4>
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold">{currentResults?.length || 0} Clinical Findings</p>
                       </div>
                       <Button variant="outline" size="sm" onClick={() => { setShowLiveResults(false); initCamera(); }} className="rounded-full h-10 px-4 font-black text-[10px] uppercase">
                         <RefreshCcw className="mr-2 h-3 w-3" /> RETAKE
