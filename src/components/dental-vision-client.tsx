@@ -48,50 +48,66 @@ function getRenderedImageRect(
 // ─── Auto-detect OPG ─────────────────────────────────────────────────────────
 
 function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
-  const SCALE = 0.25;
-  const tmp = document.createElement('canvas');
-  tmp.width  = Math.round(srcCanvas.width  * SCALE);
-  tmp.height = Math.round(srcCanvas.height * SCALE);
-  const ctx = tmp.getContext('2d')!;
-  ctx.drawImage(srcCanvas, 0, 0, tmp.width, tmp.height);
-  const { data, width, height } = ctx.getImageData(0, 0, tmp.width, tmp.height);
-
-  let total = 0;
-  for (let i = 0; i < data.length; i += 4)
-    total += (data[i] * 77 + data[i+1] * 150 + data[i+2] * 29) >> 8;
-  const mean = total / (width * height);
-  const threshold = Math.max(20, mean - 35);
-
-  let minX = width, maxX = 0, minY = height, maxY = 0, count = 0;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
-      const lum = (data[idx]*77 + data[idx+1]*150 + data[idx+2]*29) >> 8;
-      if (lum < threshold) {
-        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
-        count++;
-      }
-    }
-  }
-
-  const area = (maxX - minX) * (maxY - minY);
-  const frameArea = width * height;
-  const pad = 0.025;
-
-  if (count > 200 && area > frameArea * 0.04 && area < frameArea * 0.97) {
-    return [
-      { x: Math.max(0, minX/width  - pad), y: Math.max(0, minY/height - pad) },
-      { x: Math.min(1, maxX/width  + pad), y: Math.max(0, minY/height - pad) },
-      { x: Math.min(1, maxX/width  + pad), y: Math.min(1, maxY/height + pad) },
-      { x: Math.max(0, minX/width  - pad), y: Math.min(1, maxY/height + pad) },
-    ];
-  }
   // Fallback: wide centre crop
-  return [
+  const fallback: Quad = [
     { x: 0.05, y: 0.15 }, { x: 0.95, y: 0.15 },
     { x: 0.95, y: 0.85 }, { x: 0.05, y: 0.85 },
   ];
+
+  if (!srcCanvas || srcCanvas.width === 0 || srcCanvas.height === 0) {
+    return fallback;
+  }
+
+  try {
+    const SCALE = 0.25;
+    const tmp = document.createElement('canvas');
+    tmp.width  = Math.round(srcCanvas.width  * SCALE);
+    tmp.height = Math.round(srcCanvas.height * SCALE);
+    
+    if (tmp.width === 0 || tmp.height === 0) return fallback;
+
+    const ctx = tmp.getContext('2d');
+    if (!ctx) return fallback;
+
+    ctx.drawImage(srcCanvas, 0, 0, tmp.width, tmp.height);
+    const { data, width, height } = ctx.getImageData(0, 0, tmp.width, tmp.height);
+
+    let total = 0;
+    for (let i = 0; i < data.length; i += 4)
+      total += (data[i] * 77 + data[i+1] * 150 + data[i+2] * 29) >> 8;
+    const mean = total / (width * height);
+    const threshold = Math.max(20, mean - 35);
+
+    let minX = width, maxX = 0, minY = height, maxY = 0, count = 0;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = (y * width + x) * 4;
+        const lum = (data[idx]*77 + data[idx+1]*150 + data[idx+2]*29) >> 8;
+        if (lum < threshold) {
+          minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+          minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+          count++;
+        }
+      }
+    }
+
+    const area = (maxX - minX) * (maxY - minY);
+    const frameArea = width * height;
+    const pad = 0.025;
+
+    if (count > 200 && area > frameArea * 0.04 && area < frameArea * 0.97) {
+      return [
+        { x: Math.max(0, minX/width  - pad), y: Math.max(0, minY/height - pad) },
+        { x: Math.min(1, maxX/width  + pad), y: Math.max(0, minY/height - pad) },
+        { x: Math.min(1, maxX/width  + pad), y: Math.min(1, maxY/height + pad) },
+        { x: Math.max(0, minX/width  - pad), y: Math.min(1, maxY/height + pad) },
+      ];
+    }
+  } catch (e) {
+    console.error("Auto-detect error:", e);
+  }
+  
+  return fallback;
 }
 
 // ─── Perspective warp ─────────────────────────────────────────────────────────
@@ -410,14 +426,20 @@ export function DentalVisionClient() {
   // ── Capture: draw frame to canvas, auto-detect quad, show verify stage ──────
   const handleCapture = async () => {
     if (!videoRef.current || !canvasRef.current) return;
+    
+    const video = videoRef.current;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
     setFlash(true);
     setTimeout(() => setFlash(false), 150);
 
-    const video = videoRef.current;
     const canvas = canvasRef.current;
     canvas.width  = video.videoWidth;
     canvas.height = video.videoHeight;
-    canvas.getContext('2d')!.drawImage(video, 0, 0);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    ctx.drawImage(video, 0, 0);
 
     const rawUri = canvas.toDataURL('image/jpeg', 0.95);
     setCurrentOriginalImage(rawUri);
