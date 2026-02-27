@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { runAnalysis, runOpgDetection, getClinicalInsights, getFindingLocations } from '@/app/actions';
+import { runAnalysis, getClinicalInsights, getFindingLocations } from '@/app/actions';
 import type { AiRadiographDetectionOutput } from '@/ai/flows/ai-radiograph-detection-flow';
 import type { RadiographTutorOutput } from '@/ai/flows/radiograph-tutor-flow';
 import type { LocateFindingsOutput } from '@/ai/flows/locate-findings-flow';
@@ -15,8 +15,113 @@ import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 
-type AnalysisResults = AiRadiographDetectionOutput['results'];
-type Hotspots = LocateFindingsOutput['hotspots'];
+interface Point { x: number; y: number; }
+type Quad = [Point, Point, Point, Point]; // TL, TR, BR, BL
+
+function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
+  const SCALE = 0.2;
+  const tmp = document.createElement('canvas');
+  tmp.width = Math.round(srcCanvas.width * SCALE);
+  tmp.height = Math.round(srcCanvas.height * SCALE);
+  const ctx = tmp.getContext('2d')!;
+  ctx.drawImage(srcCanvas, 0, 0, tmp.width, tmp.height);
+  const { data, width, height } = ctx.getImageData(0, 0, tmp.width, tmp.height);
+
+  let total = 0;
+  for (let i = 0; i < data.length; i += 4)
+    total += (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
+  const mean = total / (width * height);
+  const threshold = Math.max(30, mean - 40);
+
+  let minX = width, maxX = 0, minY = height, maxY = 0, count = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const lum = (data[idx] * 77 + data[idx + 1] * 150 + data[idx + 2] * 29) >> 8;
+      if (lum < threshold) {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        count++;
+      }
+    }
+  }
+
+  const area = (maxX - minX) * (maxY - minY);
+  const useDetection = count > 100 && area > width * height * 0.05 && area < width * height * 0.95;
+  const pad = 0.02;
+
+  if (useDetection) {
+    return [
+      { x: Math.max(0, minX / width - pad),  y: Math.max(0, minY / height - pad) },
+      { x: Math.min(1, maxX / width + pad),   y: Math.max(0, minY / height - pad) },
+      { x: Math.min(1, maxX / width + pad),   y: Math.min(1, maxY / height + pad) },
+      { x: Math.max(0, minX / width - pad),   y: Math.min(1, maxY / height + pad) },
+    ];
+  }
+  return [
+    { x: 0.07, y: 0.12 }, { x: 0.93, y: 0.12 },
+    { x: 0.93, y: 0.88 }, { x: 0.07, y: 0.88 },
+  ];
+}
+
+function solveHomography(src: [number,number][], dst: [number,number][]): number[] {
+  const A: number[][] = [];
+  const b: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    const [xs, ys] = src[i], [xd, yd] = dst[i];
+    A.push([xs, ys, 1, 0, 0, 0, -xd * xs, -xd * ys]);
+    A.push([0, 0, 0, xs, ys, 1, -yd * xs, -yd * ys]);
+    b.push(xd); b.push(yd);
+  }
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < 8; col++) {
+    let maxRow = col;
+    for (let row = col + 1; row < 8; row++)
+      if (Math.abs(M[row][col]) > Math.abs(M[maxRow][col])) maxRow = row;
+    [M[col], M[maxRow]] = [M[maxRow], M[col]];
+    const pivot = M[col][col];
+    if (Math.abs(pivot) < 1e-10) continue;
+    for (let j = col; j <= 8; j++) M[col][j] /= pivot;
+    for (let row = 0; row < 8; row++) {
+      if (row === col) continue;
+      const f = M[row][col];
+      for (let j = col; j <= 8; j++) M[row][j] -= f * M[col][j];
+    }
+  }
+  return [...M.map(r => r[8]), 1];
+}
+
+function warpPerspective(srcCanvas: HTMLCanvasElement, quad: Quad, outW: number, outH: number): string {
+  const W = srcCanvas.width, H = srcCanvas.height;
+  const srcPts = quad.map(({x,y}): [number,number] => [x * W, y * H]);
+  const dstPts: [number,number][] = [[0,0],[outW,0],[outW,outH],[0,outH]];
+  const h = solveHomography(dstPts, srcPts);
+
+  const dst = document.createElement('canvas');
+  dst.width = outW; dst.height = outH;
+  const ctx = dst.getContext('2d')!;
+  const srcCtx = srcCanvas.getContext('2d')!;
+  const srcData = srcCtx.getImageData(0, 0, W, H);
+  const dstData = ctx.createImageData(outW, outH);
+
+  for (let dy = 0; dy < outH; dy++) {
+    for (let dx = 0; dx < outW; dx++) {
+      const w2 = h[6]*dx + h[7]*dy + 1;
+      const sx = Math.round((h[0]*dx + h[1]*dy + h[2]) / w2);
+      const sy = Math.round((h[3]*dx + h[4]*dy + h[5]) / w2);
+      const di = (dy * outW + dx) * 4;
+      if (sx >= 0 && sx < W && sy >= 0 && sy < H) {
+        const si = (sy * W + sx) * 4;
+        dstData.data[di]   = srcData.data[si];
+        dstData.data[di+1] = srcData.data[si+1];
+        dstData.data[di+2] = srcData.data[si+2];
+        dstData.data[di+3] = srcData.data[si+3];
+      }
+    }
+  }
+  ctx.putImageData(dstData, 0, 0);
+  return dst.toDataURL('image/jpeg', 0.92);
+}
 
 export function DentalVisionClient() {
   const [isMounted, setIsMounted] = useState(false);
@@ -37,9 +142,16 @@ export function DentalVisionClient() {
   const [isProcessingLive, setIsProcessingLive] = useState(false);
   const [showLiveResults, setShowLiveResults] = useState(false);
   const [isVerifyingScan, setIsVerifyingScan] = useState(false);
-  const [verifiedScanUri, setVerifiedScanUri] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
   
+  const [quad, setQuad] = useState<Quad>([
+    { x: 0.07, y: 0.12 }, { x: 0.93, y: 0.12 },
+    { x: 0.93, y: 0.88 }, { x: 0.07, y: 0.88 },
+  ]);
+  const [dragging, setDragging] = useState<number | null>(null);
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
+  const overlayContainerRef = useRef<HTMLDivElement>(null);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -50,6 +162,18 @@ export function DentalVisionClient() {
     setIsMounted(true);
     return () => stopLive();
   }, []);
+
+  useEffect(() => {
+    const obs = new ResizeObserver(() => {
+      if (overlayContainerRef.current)
+        setContainerSize({
+          w: overlayContainerRef.current.clientWidth,
+          h: overlayContainerRef.current.clientHeight,
+        });
+    });
+    if (overlayContainerRef.current) obs.observe(overlayContainerRef.current);
+    return () => obs.disconnect();
+  }, [isVerifyingScan]);
 
   const compressImage = (dataUri: string, maxDim: number = 1200): Promise<string> => {
     return new Promise((resolve) => {
@@ -90,7 +214,6 @@ export function DentalVisionClient() {
       setIsLiveActive(true);
       setShowLiveResults(false);
       setIsVerifyingScan(false);
-      setVerifiedScanUri(null);
       setCurrentProcessedImage(null);
     } catch (e) {
       toast({ variant: 'destructive', title: "Camera Access Denied", description: "Please allow camera access to use Live View Shoot." });
@@ -118,7 +241,6 @@ export function DentalVisionClient() {
       let result = await runAnalysis({ radiographDataUri: compressedUri });
       
       if (!result.success && originalFallbackUri) {
-        console.warn('Analysis of isolated frame failed, retrying with full frame fallback...');
         const compressedFallback = await compressImage(originalFallbackUri, 1200);
         result = await runAnalysis({ radiographDataUri: compressedFallback });
       }
@@ -163,81 +285,66 @@ export function DentalVisionClient() {
 
   const handleCapture = async () => {
     if (!videoRef.current || !canvasRef.current) return;
-    
+
     setFlash(true);
     setTimeout(() => setFlash(false), 150);
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0);
-    
-    const rawUri = canvas.toDataURL('image/jpeg', 0.95);
-    
-    setIsProcessingLive(true);
-    try {
-      const compressedForDetection = await compressImage(rawUri, 600);
-      let finalUri = rawUri;
-      
-      try {
-        const opg = await runOpgDetection({ imageDataUri: compressedForDetection });
-        if (opg.isOpg && opg.boundingBox) {
-          const { x, y, width, height } = opg.boundingBox;
-          
-          // Surgical crop sanitization: Ensure we don't crop out the whole image
-          const sx = Math.max(0, Math.min(0.9, x));
-          const sy = Math.max(0, Math.min(0.9, y));
-          const sw = Math.max(0.1, Math.min(1 - sx, width));
-          const sh = Math.max(0.1, Math.min(1 - sy, height));
-          
-          const cropX = sx * canvas.width;
-          const cropY = sy * canvas.height;
-          const cropW = sw * canvas.width;
-          const cropH = sh * canvas.height;
-          
-          const cropCanvas = document.createElement('canvas');
-          cropCanvas.width = cropW;
-          cropCanvas.height = cropH;
-          const cropCtx = cropCanvas.getContext('2d');
-          if (cropCtx) {
-            cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-            finalUri = cropCanvas.toDataURL('image/jpeg', 0.95);
-          }
-        }
-      } catch (opgError) {
-        console.warn('Cam Scanner isolation failed, falling back to full frame:', opgError);
-      }
+    canvas.getContext('2d')!.drawImage(video, 0, 0);
 
-      const verifiedUri = await compressImage(finalUri, 1200);
-      setVerifiedScanUri(verifiedUri);
-      setCurrentOriginalImage(rawUri);
-      setIsVerifyingScan(true);
-      stopLive();
-    } catch (err: any) {
-      toast({ variant: 'destructive', title: "Capture Error", description: "Connection interrupted or frame too large." });
-    } finally {
-      setIsProcessingLive(false);
-    }
+    const rawUri = canvas.toDataURL('image/jpeg', 0.95);
+    setCurrentOriginalImage(rawUri);
+
+    const detectedQuad = autoDetectOPG(canvas);
+    setQuad(detectedQuad);
+
+    setIsVerifyingScan(true);
+    stopLive();
   };
 
   const startAnalysisFromVerified = () => {
-    if (verifiedScanUri) {
-      startAnalysisTransition(async () => {
-        await processImage(verifiedScanUri, false, currentOriginalImage || undefined);
-        setIsVerifyingScan(false);
-      });
-    }
+    if (!canvasRef.current || !currentOriginalImage) return;
+
+    const warped = warpPerspective(canvasRef.current, quad, 1200, 600);
+
+    startAnalysisTransition(async () => {
+      await processImage(warped, false, currentOriginalImage);
+      setIsVerifyingScan(false);
+    });
   };
 
   const useFullFrameInstead = () => {
-    if (currentOriginalImage) {
-      setVerifiedScanUri(currentOriginalImage);
-      toast({ title: "Original Frame Selected", description: "Using full captured area for analysis." });
-    }
+    setQuad([
+      { x: 0, y: 0 }, { x: 1, y: 0 },
+      { x: 1, y: 1 }, { x: 0, y: 1 },
+    ]);
+    toast({ title: "Full Frame Selected", description: "Quad set to full image. Adjust handles if needed." });
+  };
+
+  const getRelativeXY = (e: React.PointerEvent): [number, number] => {
+    const rect = overlayContainerRef.current!.getBoundingClientRect();
+    return [
+      Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
+      Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
+    ];
+  };
+
+  const onHandlePointerDown = (idx: number) => (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragging(idx);
+  };
+
+  const onOverlayPointerMove = (e: React.PointerEvent) => {
+    if (dragging === null) return;
+    const [nx, ny] = getRelativeXY(e);
+    setQuad(prev => {
+      const next = [...prev] as Quad;
+      next[dragging] = { x: nx, y: ny };
+      return next;
+    });
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -394,14 +501,51 @@ export function DentalVisionClient() {
                       </div>
                     </div>
                   </>
-                ) : isVerifyingScan && verifiedScanUri ? (
-                  <div className="relative w-full h-full animate-in fade-in duration-500 bg-background/5">
-                    <div className="relative w-full aspect-video">
-                        <Image src={verifiedScanUri} alt="Verify Scan" fill className="object-contain p-4" />
-                    </div>
-                    <div className="absolute top-4 left-4 right-4 bg-primary/90 text-primary-foreground p-3 rounded-xl flex items-center gap-3 shadow-lg">
-                      <Info className="h-5 w-5" />
-                      <p className="text-xs font-black uppercase">Verify isolated radiograph frame</p>
+                ) : isVerifyingScan && currentOriginalImage ? (
+                  <div
+                    ref={overlayContainerRef}
+                    className="relative w-full h-full bg-black"
+                    style={{ touchAction: 'none' }}
+                    onPointerMove={onOverlayPointerMove}
+                    onPointerUp={() => setDragging(null)}
+                  >
+                    <img
+                      src={currentOriginalImage}
+                      alt="Captured"
+                      className="w-full h-full object-contain"
+                    />
+
+                    {containerSize.w > 0 && (() => {
+                      const { w, h } = containerSize;
+                      const pts = quad.map(p => `${p.x * w},${p.y * h}`).join(' ');
+                      const HANDLE_R = 20;
+                      const LABELS = ['TL','TR','BR','BL'];
+                      return (
+                        <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 ${w} ${h}`}>
+                          <defs>
+                            <mask id="qmask">
+                              <rect width="100%" height="100%" fill="white" />
+                              <polygon points={pts} fill="black" />
+                            </mask>
+                          </defs>
+                          <rect width="100%" height="100%" fill="rgba(0,0,0,0.55)" mask="url(#qmask)" />
+                          <polygon points={pts} fill="none" stroke="#14b8a6" strokeWidth="2" />
+                          {quad.map((p, i) => (
+                            <g key={i} onPointerDown={onHandlePointerDown(i)} style={{ cursor: 'grab' }}>
+                              <circle cx={p.x*w} cy={p.y*h} r={HANDLE_R+10} fill="transparent" />
+                              <circle cx={p.x*w} cy={p.y*h} r={HANDLE_R} fill="#14b8a6" fillOpacity={0.9} stroke="white" strokeWidth="2" />
+                              <text x={p.x*w} y={p.y*h+4} textAnchor="middle" fill="white" fontSize={10} fontFamily="monospace" fontWeight="bold" style={{pointerEvents:'none'}}>
+                                {LABELS[i]}
+                              </text>
+                            </g>
+                          ))}
+                        </svg>
+                      );
+                    })()}
+
+                    <div className="absolute top-3 left-3 right-3 bg-primary/90 text-primary-foreground p-3 rounded-xl flex items-center gap-2 shadow-lg pointer-events-none">
+                      <Info className="h-4 w-4 shrink-0" />
+                      <p className="text-[10px] font-black uppercase tracking-wider">Drag corners to fit OPG boundary</p>
                     </div>
                   </div>
                 ) : showLiveResults && currentProcessedImage ? (
@@ -442,7 +586,7 @@ export function DentalVisionClient() {
                     </Button>
                     <div className="flex gap-2">
                       <Button variant="secondary" onClick={useFullFrameInstead} className="flex-1 h-12 rounded-xl font-black uppercase text-[10px]">
-                        <Maximize2 className="mr-2 h-4 w-4" /> USE FULL FRAME
+                        <Maximize2 className="mr-2 h-4 w-4" /> RESET QUAD
                       </Button>
                       <Button variant="outline" onClick={initCamera} className="flex-1 h-12 rounded-xl font-black uppercase text-[10px]">
                         <RefreshCcw className="mr-2 h-4 w-4" /> RETAKE SCAN
