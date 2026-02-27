@@ -32,19 +32,17 @@ const opgDetectorPrompt = ai.definePrompt({
   name: 'opgDetectorPrompt',
   input: { schema: OpgDetectorInputSchema },
   output: { schema: OpgDetectorOutputSchema },
-  prompt: `You are a specialized "Cam Scanner" clinical imaging assistant. Your task is to extract the dental panoramic radiograph (OPG) from the provided image.
+  prompt: `You are a high-precision "Clinical Cam Scanner". Your sole task is to extract the dental panoramic radiograph (OPG) from the provided image.
 
-Think like a document scanner: Identify the exact four corners of the clinical radiograph frame.
-
-CRITICAL INSTRUCTIONS FOR SCANNER PRECISION:
-1. FOCUS ON CLINICAL DATA: Identify the exact boundaries of the clinical radiograph frame. The bounding box should capture ONLY the X-ray data area.
-2. AGGRESSIVE BACKGROUND REJECTION: Explicitly ignore and exclude the following "Negative Features":
-   - Monitor bezels, plastic lightbox frames, or desk surfaces.
-   - Background text, patient names, dates, or hospital logos appearing outside the radiograph frame.
-   - Browser tabs, Windows/Mac menu bars, or viewing software UI elements (e.g., "Preview", "File", "Edit" menus).
-   - Reflections on the monitor glass.
-3. LANDSCAPE PRIORITY: OPGs are naturally landscape. Ensure the bounding box captures the full width from left to right condyle.
-4. TIGHT INNER CROP: If there is a black border or text labels at the extreme edges of the film, shrink the bounding box inward to prioritize the dentition and supporting bone.
+CRITICAL PRECISION INSTRUCTIONS:
+1. INNER FRAME ONLY: Identify the exact four corners of the clinical X-ray data area. The bounding box should capture ONLY the internal radiograph frame.
+2. AGGRESSIVE BACKGROUND PURGE: Explicitly exclude every single pixel of the following:
+   - Monitor bezels, plastic frames, or stand bases.
+   - Any text appearing OUTSIDE the radiograph film (e.g., patient names in browser headers, Windows/Mac taskbars, hospital logos on monitor corners).
+   - Chrome browser tabs, URL bars, or viewing software UI elements.
+   - Desk surfaces or room backgrounds.
+3. TIGHT CROP: If there is a black border or white text labels at the extreme edges of the film, shrink the bounding box inward to prioritize the dentition and supporting bone.
+4. LANDSCAPE PRIORITY: OPGs are naturally landscape. Ensure the bounding box is a wide rectangle.
 
 Image: {{media url=imageDataUri}}`,
   config: {

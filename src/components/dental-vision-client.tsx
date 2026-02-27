@@ -2,7 +2,7 @@
 
 import { useState, useRef, useTransition, useEffect, useMemo } from 'react';
 import Image from 'next/image';
-import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle, RefreshCcw, ArrowRight, CornerUpLeft, CornerUpRight, CornerDownLeft, CornerDownRight } from 'lucide-react';
+import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle, RefreshCcw, ArrowRight, CornerUpLeft, CornerUpRight, CornerDownLeft, CornerDownRight, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -36,6 +36,8 @@ export function DentalVisionClient() {
   const [isLiveActive, setIsLiveActive] = useState(false);
   const [isProcessingLive, setIsProcessingLive] = useState(false);
   const [showLiveResults, setShowLiveResults] = useState(false);
+  const [isVerifyingScan, setIsVerifyingScan] = useState(false);
+  const [verifiedScanUri, setVerifiedScanUri] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -87,6 +89,8 @@ export function DentalVisionClient() {
       if (videoRef.current) videoRef.current.srcObject = stream;
       setIsLiveActive(true);
       setShowLiveResults(false);
+      setIsVerifyingScan(false);
+      setVerifiedScanUri(null);
       setCurrentProcessedImage(null);
     } catch (e) {
       toast({ variant: 'destructive', title: "Camera Access Denied", description: "Please allow camera access to use Live AR." });
@@ -113,7 +117,6 @@ export function DentalVisionClient() {
       const compressedUri = await compressImage(dataUri, 1200);
       let result = await runAnalysis({ radiographDataUri: compressedUri });
       
-      // Zero-Failure Fallback: If crop results in a server error (like 'argmin'), try the original full frame
       if (!result.success && originalFallbackUri) {
         console.warn('Analysis of isolated frame failed, retrying with full frame fallback...');
         const compressedFallback = await compressImage(originalFallbackUri, 1200);
@@ -154,10 +157,7 @@ export function DentalVisionClient() {
         toast({ variant: 'destructive', title: "Analysis Failed", description: errorMsg });
       }
     } catch (e: any) {
-      const errorMsg = e.message?.toLowerCase().includes('failed') 
-        ? "Connection timeout. Please ensure you have a stable network." 
-        : (e.message || "A communication error occurred.");
-      toast({ variant: 'destructive', title: "System Error", description: errorMsg });
+      toast({ variant: 'destructive', title: "System Error", description: e.message || "A communication error occurred." });
     }
   };
 
@@ -181,14 +181,13 @@ export function DentalVisionClient() {
     setIsProcessingLive(true);
     try {
       const compressedForDetection = await compressImage(rawUri, 600);
-      
       let finalUri = rawUri;
+      
       try {
         const opg = await runOpgDetection({ imageDataUri: compressedForDetection });
         if (opg.isOpg && opg.boundingBox) {
           const { x, y, width, height } = opg.boundingBox;
           
-          // Cam Scanner Refinement: Ensure crop is clinical data area
           const sx = Math.max(0, Math.min(1, x));
           const sy = Math.max(0, Math.min(1, y));
           const sw = Math.max(0.1, Math.min(1 - sx, width));
@@ -209,29 +208,30 @@ export function DentalVisionClient() {
         console.warn('Cam Scanner isolation failed, falling back to full frame:', opgError);
       }
 
-      const clinicalReadyUri = await compressImage(finalUri, 1200);
-      setCurrentOriginalImage(clinicalReadyUri);
-      
-      startAnalysisTransition(async () => {
-        await processImage(clinicalReadyUri, false, rawUri);
-      });
-      
+      const verifiedUri = await compressImage(finalUri, 1200);
+      setVerifiedScanUri(verifiedUri);
+      setCurrentOriginalImage(rawUri); // Keep original for fallback
+      setIsVerifyingScan(true);
       stopLive();
     } catch (err: any) {
-      console.error('Capture lifecycle error:', err);
       toast({ variant: 'destructive', title: "Capture Error", description: "Connection interrupted or frame too large." });
     } finally {
       setIsProcessingLive(false);
     }
   };
 
+  const startAnalysisFromVerified = () => {
+    if (verifiedScanUri) {
+      startAnalysisTransition(async () => {
+        await processImage(verifiedScanUri, false, currentOriginalImage || undefined);
+        setIsVerifyingScan(false);
+      });
+    }
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 10 * 1024 * 1024) {
-        toast({ variant: 'destructive', title: "File Too Large", description: "Max file size is 10MB." });
-        return;
-      }
       const reader = new FileReader();
       reader.onload = (event) => {
         const dataUri = event.target?.result as string;
@@ -268,7 +268,7 @@ export function DentalVisionClient() {
 
   if (!isMounted) return null;
 
-  const LoadingOverlay = () => (
+  const LoadingOverlay = ({ label = "Analyzing Radiograph" }: { label?: string }) => (
     <div className="absolute inset-0 bg-background/90 backdrop-blur-md flex flex-col items-center justify-center z-50 animate-in fade-in duration-300">
       <div className="relative mb-8">
         <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
@@ -277,7 +277,7 @@ export function DentalVisionClient() {
         </div>
       </div>
       <div className="text-center space-y-2">
-        <h3 className="text-xl font-black text-primary tracking-tighter uppercase">Analyzing Radiograph</h3>
+        <h3 className="text-xl font-black text-primary tracking-tighter uppercase">{label}</h3>
         <div className="flex items-center justify-center gap-2">
           <div className="h-1 w-12 bg-primary/20 rounded-full overflow-hidden">
             <div className="h-full bg-primary animate-progress" />
@@ -367,24 +367,15 @@ export function DentalVisionClient() {
           <Card className="border-primary/10 shadow-2xl overflow-hidden rounded-2xl">
             <CardContent className="p-0 relative">
               <div className="relative aspect-[4/3] sm:aspect-video bg-black flex items-center justify-center overflow-hidden">
-                {!showLiveResults ? (
+                {!showLiveResults && !isVerifyingScan ? (
                   <>
                     <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
                     <div className="absolute inset-0 border-[20px] sm:border-[40px] border-black/50 pointer-events-none">
                       <div className="w-full h-full border-2 border-primary/20 rounded-lg relative overflow-hidden">
-                        <div className="absolute top-4 left-4 text-primary/60 flex flex-col items-center">
-                            <CornerUpLeft className="h-12 w-12" />
-                        </div>
-                        <div className="absolute top-4 right-4 text-primary/60 flex flex-col items-center">
-                            <CornerUpRight className="h-12 w-12" />
-                        </div>
-                        <div className="absolute bottom-4 left-4 text-primary/60 flex flex-col items-center">
-                            <CornerDownLeft className="h-12 w-12" />
-                        </div>
-                        <div className="absolute bottom-4 right-4 text-primary/60 flex flex-col items-center">
-                            <CornerDownRight className="h-12 w-12" />
-                        </div>
-                        
+                        <div className="absolute top-4 left-4 text-primary/60"><CornerUpLeft className="h-12 w-12" /></div>
+                        <div className="absolute top-4 right-4 text-primary/60"><CornerUpRight className="h-12 w-12" /></div>
+                        <div className="absolute bottom-4 left-4 text-primary/60"><CornerDownLeft className="h-12 w-12" /></div>
+                        <div className="absolute bottom-4 right-4 text-primary/60"><CornerDownRight className="h-12 w-12" /></div>
                         <div className="absolute inset-0 flex flex-col items-center justify-center opacity-20">
                             <Target className="h-16 w-16 text-primary" />
                             <p className="mt-2 text-[10px] font-black uppercase tracking-widest">Targeting OPG...</p>
@@ -392,21 +383,27 @@ export function DentalVisionClient() {
                       </div>
                     </div>
                   </>
-                ) : (
-                  currentProcessedImage && (
-                    <div className="relative w-full h-full animate-in zoom-in-95 duration-500 bg-black flex items-center justify-center">
-                      <div className="relative w-full aspect-video">
-                        <Image src={currentProcessedImage} alt="AR Findings" fill className="object-contain" />
-                      </div>
+                ) : isVerifyingScan && verifiedScanUri ? (
+                  <div className="relative w-full h-full animate-in fade-in duration-500 bg-background/5">
+                    <Image src={verifiedScanUri} alt="Verify Scan" fill className="object-contain p-4" />
+                    <div className="absolute top-4 left-4 right-4 bg-primary/90 text-primary-foreground p-3 rounded-xl flex items-center gap-3 shadow-lg">
+                      <Info className="h-5 w-5" />
+                      <p className="text-xs font-black uppercase">Verify isolated radiograph frame</p>
                     </div>
-                  )
-                )}
+                  </div>
+                ) : showLiveResults && currentProcessedImage ? (
+                  <div className="relative w-full h-full animate-in zoom-in-95 duration-500 bg-black flex items-center justify-center">
+                    <div className="relative w-full aspect-video">
+                      <Image src={currentProcessedImage} alt="AR Findings" fill className="object-contain" />
+                    </div>
+                  </div>
+                ) : null}
                 
                 {flash && <div className="absolute inset-0 bg-white z-[60] animate-out fade-out duration-300" />}
                 
-                {(isAnalyzing || isProcessingLive) && <LoadingOverlay />}
+                {(isAnalyzing || isProcessingLive) && <LoadingOverlay label={isProcessingLive ? "Isolating OPG..." : "Analyzing Radiograph"} />}
 
-                {!isLiveActive && !showLiveResults && (
+                {!isLiveActive && !isVerifyingScan && !showLiveResults && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md">
                     <Button onClick={initCamera} size="lg" className="h-16 px-10 rounded-full font-black">
                       START CAMERA
@@ -416,42 +413,43 @@ export function DentalVisionClient() {
               </div>
 
               <div className="p-4 bg-background border-t">
-                {!showLiveResults ? (
+                {isLiveActive ? (
                   <>
-                    <Button onClick={handleCapture} disabled={isProcessingLive || !isLiveActive || isAnalyzing} size="lg" className="w-full h-20 text-xl font-black rounded-2xl shadow-xl transition-all active:scale-95">
-                      {isProcessingLive || isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <ScanLine className="mr-3 h-7 w-7" />}
+                    <Button onClick={handleCapture} disabled={isProcessingLive || !isLiveActive} size="lg" className="w-full h-20 text-xl font-black rounded-2xl shadow-xl transition-all active:scale-95">
+                      {isProcessingLive ? <Loader2 className="animate-spin mr-2" /> : <ScanLine className="mr-3 h-7 w-7" />}
                       CAPTURE & SCAN
                     </Button>
-                    <div className="flex items-center justify-center gap-2 mt-4 text-muted-foreground opacity-60">
-                      <Info className="h-3 w-3" />
-                      <p className="text-[10px] font-black uppercase tracking-widest text-center">Cam Scanner Mode: Isolating X-Ray frame</p>
-                    </div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-center mt-3 text-muted-foreground opacity-60">Align OPG within the corner brackets</p>
                   </>
-                ) : (
+                ) : isVerifyingScan ? (
+                  <div className="space-y-3 animate-in slide-in-from-bottom-4">
+                    <Button onClick={startAnalysisFromVerified} size="lg" className="w-full h-20 text-lg font-black rounded-2xl shadow-2xl bg-primary">
+                      <CheckCircle2 className="mr-3 h-6 w-6" />
+                      CONFIRM & ANALYZE
+                    </Button>
+                    <Button variant="outline" onClick={initCamera} className="w-full h-12 rounded-xl font-black uppercase text-xs">
+                      <RefreshCcw className="mr-2 h-4 w-4" /> RETAKE SCAN
+                    </Button>
+                  </div>
+                ) : showLiveResults ? (
                   <div className="space-y-4 animate-in slide-in-from-bottom-4 duration-500">
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center justify-between gap-3 px-1">
                       <div className="flex flex-col">
                         <h4 className="text-xs font-black uppercase text-primary">Scanner Analysis Complete</h4>
                         <p className="text-[10px] text-muted-foreground uppercase font-bold">{currentResults?.length || 0} Clinical Findings</p>
                       </div>
-                      <Button variant="outline" size="sm" onClick={() => { setShowLiveResults(false); initCamera(); }} className="rounded-full h-10 px-4 font-black text-[10px] uppercase">
-                        <RefreshCcw className="mr-2 h-3 w-3" /> RETAKE
+                      <Button variant="outline" size="sm" onClick={initCamera} className="rounded-full h-10 px-4 font-black text-[10px] uppercase">
+                        <RefreshCcw className="mr-2 h-3 w-3" /> NEW SCAN
                       </Button>
                     </div>
                     
-                    <Button 
-                      onClick={() => {
-                        setActiveTab('consult');
-                      }} 
-                      size="lg" 
-                      className="w-full h-20 text-lg font-black rounded-2xl shadow-2xl bg-primary hover:bg-primary/90"
-                    >
+                    <Button onClick={() => setActiveTab('consult')} size="lg" className="w-full h-20 text-lg font-black rounded-2xl shadow-2xl bg-primary">
                       <Sparkles className="mr-3 h-6 w-6" />
                       START AI TUTORING DEEP-DIVE
                       <ArrowRight className="ml-2 h-5 w-5" />
                     </Button>
                   </div>
-                )}
+                ) : null}
               </div>
               <canvas ref={canvasRef} className="hidden" />
             </CardContent>
