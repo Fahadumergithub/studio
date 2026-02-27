@@ -1,7 +1,7 @@
 'use server';
 /**
  * @fileOverview This file implements a Genkit flow for detecting if an image contains a dental OPG
- * and identifying its bounding box for cropping.
+ * and identifying its bounding box for surgical cropping.
  */
 
 import { ai } from '@/ai/genkit';
@@ -24,7 +24,7 @@ const OpgDetectorOutputSchema = z.object({
     y: z.number().describe('Normalized y-coordinate of the top-left corner (0.0 to 1.0).'),
     width: z.number().describe('Normalized width (0.0 to 1.0).'),
     height: z.number().describe('Normalized height (0.0 to 1.0).'),
-  }).optional().describe('The bounding box of the OPG radiograph if detected.'),
+  }).optional().describe('The tight bounding box of the OPG radiograph if detected.'),
 });
 export type OpgDetectorOutput = z.infer<typeof OpgDetectorOutputSchema>;
 
@@ -32,17 +32,17 @@ const opgDetectorPrompt = ai.definePrompt({
   name: 'opgDetectorPrompt',
   input: { schema: OpgDetectorInputSchema },
   output: { schema: OpgDetectorOutputSchema },
-  prompt: `You are a high-precision "Clinical Cam Scanner". Your sole task is to extract the dental panoramic radiograph (OPG) from the provided image.
+  prompt: `You are a "Surgical Frame Extractor" for clinical dental imaging. Your sole task is to identify the precise internal boundaries of a dental panoramic radiograph (OPG).
 
-CRITICAL PRECISION INSTRUCTIONS:
-1. INNER FRAME ONLY: Identify the exact four corners of the clinical X-ray data area. The bounding box should capture ONLY the internal radiograph frame.
-2. AGGRESSIVE BACKGROUND PURGE: Explicitly exclude every single pixel of the following:
-   - Monitor bezels, plastic frames, or stand bases.
-   - Any text appearing OUTSIDE the radiograph film (e.g., patient names in browser headers, Windows/Mac taskbars, hospital logos on monitor corners).
-   - Chrome browser tabs, URL bars, or viewing software UI elements.
-   - Desk surfaces or room backgrounds.
-3. TIGHT CROP: If there is a black border or white text labels at the extreme edges of the film, shrink the bounding box inward to prioritize the dentition and supporting bone.
-4. LANDSCAPE PRIORITY: OPGs are naturally landscape. Ensure the bounding box is a wide rectangle.
+PRECISION EXTRACTION RULES:
+1. CLINICAL DATA ONLY: Identify the exact rectangle containing the pink/purple-ish radiograph film data. 
+2. ZERO TOLERANCE FOR BACKGROUND: You MUST EXCLUDE the following with 100% precision:
+   - Monitor bezels, plastic frames, or desktop wallpaper.
+   - Any browser UI, tabs, URL bars, or window minimize/maximize buttons.
+   - Hospital logos, patient names, or date text appearing OUTSIDE the film frame.
+   - Desks, lightboxes, or room reflections.
+3. LANDSCAPE RATIO: OPGs are naturally wide. If the bounding box is not a wide landscape rectangle (width > height), you have likely failed. Re-evaluate to find the wide film frame.
+4. TIGHTEST POSSIBLE CROP: Shrink the bounding box inward until it touches only the teeth and jaw structure.
 
 Image: {{media url=imageDataUri}}`,
   config: {

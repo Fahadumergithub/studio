@@ -188,8 +188,9 @@ export function DentalVisionClient() {
         if (opg.isOpg && opg.boundingBox) {
           const { x, y, width, height } = opg.boundingBox;
           
-          const sx = Math.max(0, Math.min(1, x));
-          const sy = Math.max(0, Math.min(1, y));
+          // Surgical crop sanitization: Ensure we don't crop out the whole image
+          const sx = Math.max(0, Math.min(0.9, x));
+          const sy = Math.max(0, Math.min(0.9, y));
           const sw = Math.max(0.1, Math.min(1 - sx, width));
           const sh = Math.max(0.1, Math.min(1 - sy, height));
           
@@ -201,8 +202,11 @@ export function DentalVisionClient() {
           const cropCanvas = document.createElement('canvas');
           cropCanvas.width = cropW;
           cropCanvas.height = cropH;
-          cropCanvas.getContext('2d')?.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-          finalUri = cropCanvas.toDataURL('image/jpeg', 0.95);
+          const cropCtx = cropCanvas.getContext('2d');
+          if (cropCtx) {
+            cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+            finalUri = cropCanvas.toDataURL('image/jpeg', 0.95);
+          }
         }
       } catch (opgError) {
         console.warn('Cam Scanner isolation failed, falling back to full frame:', opgError);
@@ -210,7 +214,7 @@ export function DentalVisionClient() {
 
       const verifiedUri = await compressImage(finalUri, 1200);
       setVerifiedScanUri(verifiedUri);
-      setCurrentOriginalImage(rawUri); // Keep original for fallback
+      setCurrentOriginalImage(rawUri);
       setIsVerifyingScan(true);
       stopLive();
     } catch (err: any) {
@@ -366,7 +370,7 @@ export function DentalVisionClient() {
         <TabsContent value="live">
           <Card className="border-primary/10 shadow-2xl overflow-hidden rounded-2xl">
             <CardContent className="p-0 relative">
-              <div className="relative aspect-[4/3] sm:aspect-video bg-black flex items-center justify-center overflow-hidden">
+              <div className="relative aspect-video sm:aspect-video bg-black flex items-center justify-center overflow-hidden">
                 {!showLiveResults && !isVerifyingScan ? (
                   <>
                     <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
@@ -467,7 +471,7 @@ export function DentalVisionClient() {
                     </h3>
                     {hotspots && <Badge variant="outline" className="text-[9px] font-black">TAP FINDINGS</Badge>}
                   </div>
-                  <div className="relative aspect-[16/10] bg-black">
+                  <div className="relative aspect-video bg-black">
                     {currentProcessedImage && (
                       <>
                         <Image src={currentProcessedImage} alt="Analyzed Radiograph" fill className="object-contain" />
