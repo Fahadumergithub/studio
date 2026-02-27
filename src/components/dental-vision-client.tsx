@@ -93,7 +93,7 @@ export function DentalVisionClient() {
       setVerifiedScanUri(null);
       setCurrentProcessedImage(null);
     } catch (e) {
-      toast({ variant: 'destructive', title: "Camera Access Denied", description: "Please allow camera access to use Live AR." });
+      toast({ variant: 'destructive', title: "Camera Access Denied", description: "Please allow camera access to use Live View Shoot." });
     }
   };
 
@@ -308,7 +308,7 @@ export function DentalVisionClient() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-3 mb-4 h-11 bg-muted/50 rounded-lg p-1">
           <TabsTrigger value="upload" onClick={stopLive} className="text-[11px] sm:text-sm font-bold uppercase"><Upload className="mr-2 h-4 w-4 hidden sm:block" />Upload</TabsTrigger>
-          <TabsTrigger value="live" onClick={initCamera} className="text-[11px] sm:text-sm font-bold uppercase"><Camera className="mr-2 h-4 w-4 hidden sm:block" />Live AR</TabsTrigger>
+          <TabsTrigger value="live" onClick={initCamera} className="text-[11px] sm:text-sm font-bold uppercase"><Camera className="mr-2 h-4 w-4 hidden sm:block" />Live View Shoot</TabsTrigger>
           <TabsTrigger value="consult" disabled={!currentResults} className="text-[11px] sm:text-sm font-bold uppercase"><Sparkles className="mr-2 h-4 w-4 hidden sm:block" />AI Consult</TabsTrigger>
         </TabsList>
 
