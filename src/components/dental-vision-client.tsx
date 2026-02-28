@@ -81,13 +81,9 @@ function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
   }
   const mean = total / lums.length;
 
-  // Try BOTH modes: OPG darker than background (classic), or lighter (screen glow)
-  // Run both and pick whichever gives a more reasonable bounding box
   const pad = 0.02;
 
   function findBBox(targetDark: boolean): { minX:number; maxX:number; minY:number; maxY:number; count:number } {
-    // For dark OPG: pixels significantly below mean
-    // For light OPG: pixels significantly above mean
     const threshold = targetDark ? mean - 30 : mean + 30;
     let minX = width, maxX = 0, minY = height, maxY = 0, count = 0;
     for (let y = 0; y < height; y++) {
@@ -109,9 +105,8 @@ function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
     const area = (b.maxX - b.minX) * (b.maxY - b.minY);
     const frameArea = width * height;
     if (area < frameArea * 0.03 || area > frameArea * 0.96) return 0;
-    // Prefer boxes that are landscape-ish (OPG aspect ratio ~2:1)
     const aspect = (b.maxX - b.minX) / Math.max(1, b.maxY - b.minY);
-    const aspectScore = aspect > 1.0 ? 1.0 : 0.5; // reward landscape boxes
+    const aspectScore = aspect > 1.0 ? 1.0 : 0.5;
     return (area / frameArea) * aspectScore;
   }
 
@@ -258,11 +253,8 @@ function VerifyStage({ imageUri, naturalW, naturalH, quad, onQuadChange }: Verif
       onPointerMove={onPointerMove}
       onPointerUp={() => setDragging(null)}
     >
-      {/* Captured frame */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={imageUri} alt="Captured" className="w-full h-full object-contain" draggable={false} />
 
-      {/* Overlay SVG */}
       {cw > 0 && (
         <svg className="absolute inset-0 pointer-events-none" width={cw} height={ch} viewBox={`0 0 ${cw} ${ch}`}>
           <defs>
@@ -271,11 +263,8 @@ function VerifyStage({ imageUri, naturalW, naturalH, quad, onQuadChange }: Verif
               <polygon points={polyPoints} fill="black" />
             </mask>
           </defs>
-          {/* Darken outside quad */}
           <rect width={cw} height={ch} fill="rgba(0,0,0,0.60)" mask="url(#qmask)" />
-          {/* Quad border */}
           <polygon points={polyPoints} fill="none" stroke="#14b8a6" strokeWidth="2.5" strokeLinejoin="round" />
-          {/* Rule-of-thirds grid */}
           {[1/3, 2/3].map(t => {
             const [tl, tr, br, bl] = screenPts;
             const vTop = { x: tl.x + (tr.x-tl.x)*t, y: tl.y + (tr.y-tl.y)*t };
@@ -292,7 +281,6 @@ function VerifyStage({ imageUri, naturalW, naturalH, quad, onQuadChange }: Verif
         </svg>
       )}
 
-      {/* Drag handles — div elements for reliable mobile touch */}
       {cw > 0 && screenPts.map((sp, i) => (
         <div
           key={i}
@@ -313,7 +301,6 @@ function VerifyStage({ imageUri, naturalW, naturalH, quad, onQuadChange }: Verif
         </div>
       ))}
 
-      {/* Instruction banner */}
       <div className="absolute top-3 left-3 right-3 bg-teal-600/95 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 shadow-lg pointer-events-none">
         <Info className="h-4 w-4 shrink-0" />
         <p className="text-[11px] font-black uppercase tracking-wider">Drag corners to fit OPG boundary</p>
@@ -339,7 +326,7 @@ export function DentalVisionClient() {
   const [isAnalyzing, startAnalysisTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Live AR state
+  // Live View state
   const [isLiveActive, setIsLiveActive] = useState(false);
   const [isProcessingLive, setIsProcessingLive] = useState(false);
   const [showLiveResults, setShowLiveResults] = useState(false);
@@ -364,7 +351,7 @@ export function DentalVisionClient() {
     return () => stopLive();
   }, []);
 
-  // Re-attach stream whenever the video element is mounted and visible
+  // Sync camera stream to video element
   useEffect(() => {
     if (isLiveActive && !isVerifyingScan && !showLiveResults && streamRef.current && videoRef.current) {
       if (videoRef.current.srcObject !== streamRef.current) {
@@ -373,7 +360,7 @@ export function DentalVisionClient() {
     }
   }, [isLiveActive, isVerifyingScan, showLiveResults]);
 
-  const compressImage = (dataUri: string, maxDim = 1200): Promise<string> =>
+  const compressImage = (dataUri: string, maxDim = 1200, quality = 0.92): Promise<string> =>
     new Promise(resolve => {
       const img = new window.Image();
       img.onload = () => {
@@ -383,21 +370,18 @@ export function DentalVisionClient() {
         else                { if (height > maxDim) { width *= maxDim/height; height = maxDim; } }
         canvas.width = width; canvas.height = height;
         canvas.getContext('2d')?.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.8));
+        resolve(canvas.toDataURL('image/jpeg', quality));
       };
       img.src = dataUri;
     });
 
   const initCamera = async () => {
     try {
-      // Clear previous stream if any
-      stopLive();
-      
+      stopLive(); // Clean up existing
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 1920 } }
       });
       streamRef.current = stream;
-      
       setIsLiveActive(true);
       setShowLiveResults(false);
       setIsVerifyingScan(false);
@@ -414,7 +398,7 @@ export function DentalVisionClient() {
     streamRef.current = null;
   };
 
-  const processImage = async (dataUri: string, autoNav = true, originalFallbackUri?: string) => {
+  const processImage = async (dataUri: string, autoNav = true, originalFallbackUri?: string): Promise<boolean> => {
     setCurrentProcessedImage(null);
     setCurrentResults(null);
     setClinicalInsights(null);
@@ -426,7 +410,8 @@ export function DentalVisionClient() {
       const compressedUri = await compressImage(dataUri, 1200);
       let result = await runAnalysis({ radiographDataUri: compressedUri });
 
-      if (!result.success && originalFallbackUri) {
+      // Fallback mechanism: Try original full frame if warped image fails to identify arch
+      if (!result.success && originalFallbackUri && result.error.toLowerCase().includes('argmin')) {
         const compressedFallback = await compressImage(originalFallbackUri, 1200);
         result = await runAnalysis({ radiographDataUri: compressedFallback });
       }
@@ -449,14 +434,17 @@ export function DentalVisionClient() {
         if (autoNav) setActiveTab('consult');
         else setShowLiveResults(true);
         toast({ title: 'Analysis Complete', description: 'Clinical findings have been mapped.' });
+        return true;
       } else {
         const errorMsg = result.error.toLowerCase().includes('argmin')
-          ? 'AI could not identify the dental arch. Please centre the OPG and ensure it is well-lit.'
+          ? 'AI could not identify the dental arch. Please include more of the jaw structure in your crop.'
           : result.error;
         toast({ variant: 'destructive', title: 'Analysis Failed', description: errorMsg });
+        return false;
       }
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'System Error', description: e.message || 'A communication error occurred.' });
+      return false;
     }
   };
 
@@ -467,7 +455,6 @@ export function DentalVisionClient() {
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
-
     canvas.width  = video.videoWidth  || 1280;
     canvas.height = video.videoHeight || 720;
     const ctx = canvas.getContext('2d');
@@ -482,8 +469,6 @@ export function DentalVisionClient() {
 
     const detected = autoDetectOPG(canvas);
     setQuad(detected);
-
-    setIsProcessingLive(false);
     setIsVerifyingScan(true);
   };
 
@@ -504,8 +489,12 @@ export function DentalVisionClient() {
       });
 
       const warped = warpPerspective(canvasRef.current!, quad, 1200, 600);
-      await processImage(warped, false, currentOriginalImage || undefined);
-      setIsVerifyingScan(false);
+      const success = await processImage(warped, false, currentOriginalImage || undefined);
+      
+      // Only hide verification view if analysis was successful
+      if (success) {
+        setIsVerifyingScan(false);
+      }
     });
   };
 
