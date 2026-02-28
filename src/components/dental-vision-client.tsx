@@ -1,22 +1,18 @@
 'use client';
 
-import { useState, useRef, useTransition, useEffect, useMemo, useCallback } from 'react';
+import { useState, useRef, useTransition, useEffect, useCallback } from 'react';
 import Image from 'next/image';
-import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, BookOpen, GraduationCap, ChevronRight, XCircle, HelpCircle, AlertTriangle, RefreshCcw, ArrowRight, CheckCircle2, Maximize2 } from 'lucide-react';
+import { Upload, Bot, ScanLine, Eye, Camera, Info, Loader2, Target, Sparkles, XCircle, RefreshCcw, CheckCircle2, Maximize2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
-import { runAnalysis, getClinicalInsights, getFindingLocations } from '@/app/actions';
+import { runAnalysis } from '@/app/actions';
 import type { AiRadiographDetectionOutput } from '@/ai/flows/ai-radiograph-detection-flow';
-import type { RadiographTutorOutput } from '@/ai/flows/radiograph-tutor-flow';
-import type { LocateFindingsOutput } from '@/ai/flows/locate-findings-flow';
 import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 
 type AnalysisResults = AiRadiographDetectionOutput['results'];
-type Hotspots = LocateFindingsOutput['hotspots'];
 
 // ─── Quad types ───────────────────────────────────────────────────────────────
 interface QuadPoint { x: number; y: number; } // 0–1 normalized to canvas dims
@@ -24,10 +20,6 @@ type Quad = [QuadPoint, QuadPoint, QuadPoint, QuadPoint]; // TL TR BR BL
 
 // ─── Coordinate helpers ───────────────────────────────────────────────────────
 
-/**
- * Returns the rendered image rect inside an object-contain container.
- * Accounts for letterbox / pillarbox black bars.
- */
 function getRenderedImageRect(
   containerW: number, containerH: number,
   imageW: number, imageH: number
@@ -53,7 +45,6 @@ const FALLBACK_QUAD: Quad = [
 ];
 
 function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
-  // Guard: canvas must have valid pixel data
   if (!srcCanvas || srcCanvas.width < 4 || srcCanvas.height < 4) return FALLBACK_QUAD;
 
   const SCALE = 0.25;
@@ -80,7 +71,6 @@ function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
     total += l;
   }
   const mean = total / lums.length;
-
   const pad = 0.02;
 
   function findBBox(targetDark: boolean): { minX:number; maxX:number; minY:number; maxY:number; count:number } {
@@ -114,7 +104,6 @@ function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
   const lightBox = findBBox(false);
   const darkScore  = scoreBox(darkBox);
   const lightScore = scoreBox(lightBox);
-
   const best = darkScore >= lightScore ? darkBox : lightBox;
 
   if (scoreBox(best) > 0) {
@@ -125,7 +114,6 @@ function autoDetectOPG(srcCanvas: HTMLCanvasElement): Quad {
       { x: Math.max(0, best.minX/width  - pad), y: Math.min(1, best.maxY/height + pad) },
     ];
   }
-
   return FALLBACK_QUAD;
 }
 
@@ -318,15 +306,11 @@ export function DentalVisionClient() {
   const [currentOriginalImage, setCurrentOriginalImage] = useState<string | null>(null);
   const [currentProcessedImage, setCurrentProcessedImage] = useState<string | null>(null);
   const [currentResults, setCurrentResults] = useState<AnalysisResults | null>(null);
-  const [clinicalInsights, setClinicalInsights] = useState<RadiographTutorOutput | null>(null);
-  const [hotspots, setHotspots] = useState<Hotspots | null>(null);
-  const [selectedFindingIndex, setSelectedFindingIndex] = useState<number | null>(null);
-  const [isAiRateLimited, setIsAiRateLimited] = useState(false);
 
   const [isAnalyzing, startAnalysisTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Live View state
+  // Live state
   const [isLiveActive, setIsLiveActive] = useState(false);
   const [isProcessingLive, setIsProcessingLive] = useState(false);
   const [showLiveResults, setShowLiveResults] = useState(false);
@@ -351,16 +335,7 @@ export function DentalVisionClient() {
     return () => stopLive();
   }, []);
 
-  // Sync camera stream to video element
-  useEffect(() => {
-    if (isLiveActive && !isVerifyingScan && !showLiveResults && streamRef.current && videoRef.current) {
-      if (videoRef.current.srcObject !== streamRef.current) {
-        videoRef.current.srcObject = streamRef.current;
-      }
-    }
-  }, [isLiveActive, isVerifyingScan, showLiveResults]);
-
-  const compressImage = (dataUri: string, maxDim = 1200, quality = 0.92): Promise<string> =>
+  const compressImage = (dataUri: string, maxDim = 1200): Promise<string> =>
     new Promise(resolve => {
       const img = new window.Image();
       img.onload = () => {
@@ -370,23 +345,24 @@ export function DentalVisionClient() {
         else                { if (height > maxDim) { width *= maxDim/height; height = maxDim; } }
         canvas.width = width; canvas.height = height;
         canvas.getContext('2d')?.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
+        resolve(canvas.toDataURL('image/jpeg', 0.92));
       };
       img.src = dataUri;
     });
 
   const initCamera = async () => {
     try {
-      stopLive(); // Clean up existing
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 1920 } }
       });
       streamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
       setIsLiveActive(true);
       setShowLiveResults(false);
       setIsVerifyingScan(false);
       setCurrentProcessedImage(null);
-      setImgNaturalSize({ w: 0, h: 0 }); 
+      setCurrentResults(null);
+      setImgNaturalSize({ w: 0, h: 0 });
     } catch {
       toast({ variant: 'destructive', title: 'Camera Access Denied', description: 'Please allow camera access to use Live View Shoot.' });
     }
@@ -398,20 +374,15 @@ export function DentalVisionClient() {
     streamRef.current = null;
   };
 
-  const processImage = async (dataUri: string, autoNav = true, originalFallbackUri?: string): Promise<boolean> => {
+  const processImage = async (dataUri: string, originalFallbackUri?: string) => {
     setCurrentProcessedImage(null);
     setCurrentResults(null);
-    setClinicalInsights(null);
-    setHotspots(null);
-    setSelectedFindingIndex(null);
-    setIsAiRateLimited(false);
 
     try {
       const compressedUri = await compressImage(dataUri, 1200);
       let result = await runAnalysis({ radiographDataUri: compressedUri });
 
-      // Fallback mechanism: Try original full frame if warped image fails to identify arch
-      if (!result.success && originalFallbackUri && result.error.toLowerCase().includes('argmin')) {
+      if (!result.success && originalFallbackUri) {
         const compressedFallback = await compressImage(originalFallbackUri, 1200);
         result = await runAnalysis({ radiographDataUri: compressedFallback });
       }
@@ -419,32 +390,15 @@ export function DentalVisionClient() {
       if (result.success) {
         setCurrentProcessedImage(result.data.processedImage);
         setCurrentResults(result.data.results);
-
-        try {
-          const [insights, locationData] = await Promise.all([
-            getClinicalInsights({ originalImageDataUri: compressedUri, detections: result.data.results }),
-            getFindingLocations({ processedRadiographDataUri: result.data.processedImage, findings: result.data.results })
-          ]);
-          if (!insights || !locationData) setIsAiRateLimited(true);
-          else { setClinicalInsights(insights); setHotspots(locationData.hotspots); }
-        } catch {
-          setIsAiRateLimited(true);
-        }
-
-        if (autoNav) setActiveTab('consult');
-        else setShowLiveResults(true);
         toast({ title: 'Analysis Complete', description: 'Clinical findings have been mapped.' });
-        return true;
       } else {
         const errorMsg = result.error.toLowerCase().includes('argmin')
-          ? 'AI could not identify the dental arch. Please include more of the jaw structure in your crop.'
+          ? 'AI could not identify the dental arch. Please center the OPG and ensure it is well-lit.'
           : result.error;
         toast({ variant: 'destructive', title: 'Analysis Failed', description: errorMsg });
-        return false;
       }
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'System Error', description: e.message || 'A communication error occurred.' });
-      return false;
     }
   };
 
@@ -457,11 +411,7 @@ export function DentalVisionClient() {
     const canvas = canvasRef.current;
     canvas.width  = video.videoWidth  || 1280;
     canvas.height = video.videoHeight || 720;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0);
-
-    stopLive();
+    canvas.getContext('2d')!.drawImage(video, 0, 0);
 
     const rawUri = canvas.toDataURL('image/jpeg', 0.95);
     setCurrentOriginalImage(rawUri);
@@ -469,7 +419,10 @@ export function DentalVisionClient() {
 
     const detected = autoDetectOPG(canvas);
     setQuad(detected);
+
+    setIsProcessingLive(false);
     setIsVerifyingScan(true);
+    stopLive();
   };
 
   const startAnalysisFromVerified = () => {
@@ -489,12 +442,9 @@ export function DentalVisionClient() {
       });
 
       const warped = warpPerspective(canvasRef.current!, quad, 1200, 600);
-      const success = await processImage(warped, false, currentOriginalImage || undefined);
-      
-      // Only hide verification view if analysis was successful
-      if (success) {
-        setIsVerifyingScan(false);
-      }
+      await processImage(warped, currentOriginalImage || undefined);
+      setIsVerifyingScan(false);
+      setShowLiveResults(true);
     });
   };
 
@@ -526,16 +476,8 @@ export function DentalVisionClient() {
 
   const startUploadAnalysis = () => {
     if (currentOriginalImage)
-      startAnalysisTransition(async () => { await processImage(currentOriginalImage, true); });
+      startAnalysisTransition(async () => { await processImage(currentOriginalImage); });
   };
-
-  const selectedExplanation = useMemo(() => {
-    if (!clinicalInsights || selectedFindingIndex === null || !currentResults) return null;
-    const disease = currentResults[selectedFindingIndex].disease.toLowerCase();
-    return clinicalInsights.pathologyExplanation.find(p =>
-      p.condition.toLowerCase().includes(disease) || disease.includes(p.condition.toLowerCase())
-    );
-  }, [clinicalInsights, selectedFindingIndex, currentResults]);
 
   if (!isMounted) return null;
 
@@ -544,7 +486,7 @@ export function DentalVisionClient() {
       <div className="relative mb-8">
         <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
         <div className="relative h-24 w-24 bg-primary/10 rounded-full flex items-center justify-center border-4 border-primary/20">
-          <Sparkles className="h-10 w-10 text-primary animate-pulse" />
+          <Bot className="h-10 w-10 text-primary animate-pulse" />
         </div>
       </div>
       <div className="text-center space-y-2">
@@ -566,15 +508,12 @@ export function DentalVisionClient() {
   return (
     <div className="space-y-4 max-w-5xl mx-auto pb-20 px-2 sm:px-0">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-3 mb-4 h-11 bg-muted/50 rounded-lg p-1">
+        <TabsList className="grid w-full grid-cols-2 mb-4 h-11 bg-muted/50 rounded-lg p-1">
           <TabsTrigger value="upload" onClick={stopLive} className="text-[11px] sm:text-sm font-bold uppercase">
-            <Upload className="mr-2 h-4 w-4 hidden sm:block" />Upload
+            <Upload className="mr-2 h-4 w-4 hidden sm:block" />Upload OPG
           </TabsTrigger>
           <TabsTrigger value="live" onClick={initCamera} className="text-[11px] sm:text-sm font-bold uppercase">
             <Camera className="mr-2 h-4 w-4 hidden sm:block" />Live View Shoot
-          </TabsTrigger>
-          <TabsTrigger value="consult" disabled={!currentResults} className="text-[11px] sm:text-sm font-bold uppercase">
-            <Sparkles className="mr-2 h-4 w-4 hidden sm:block" />AI Consult
           </TabsTrigger>
         </TabsList>
 
@@ -585,18 +524,13 @@ export function DentalVisionClient() {
                 onClick={() => !currentOriginalImage && !isAnalyzing && fileInputRef.current?.click()}
                 className={cn(
                   'w-full aspect-video sm:aspect-[16/7] border-2 border-dashed rounded-2xl flex flex-col items-center justify-center transition-all group overflow-hidden relative',
-                  currentOriginalImage ? 'border-primary/40 bg-primary/5 cursor-default' : 'border-primary/20 cursor-pointer hover:bg-primary/5'
+                  currentOriginalImage || currentProcessedImage ? 'border-primary/40 bg-primary/5 cursor-default' : 'border-primary/20 cursor-pointer hover:bg-primary/5'
                 )}
               >
-                {currentOriginalImage ? (
-                  <>
-                    <Image src={currentOriginalImage} alt="Uploaded OPG" fill className="object-contain p-2" />
-                    {!isAnalyzing && (
-                      <button onClick={clearUpload} className="absolute top-4 right-4 h-10 w-10 bg-background/80 backdrop-blur shadow-md rounded-full flex items-center justify-center hover:bg-destructive hover:text-white transition-colors z-20">
-                        <XCircle className="h-6 w-6" />
-                      </button>
-                    )}
-                  </>
+                {currentProcessedImage ? (
+                  <Image src={currentProcessedImage} alt="Analyzed OPG" fill className="object-contain p-2" />
+                ) : currentOriginalImage ? (
+                  <Image src={currentOriginalImage} alt="Uploaded OPG" fill className="object-contain p-2" />
                 ) : (
                   <>
                     <div className="h-16 w-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
@@ -606,12 +540,18 @@ export function DentalVisionClient() {
                     <p className="text-[10px] text-muted-foreground mt-1 uppercase tracking-widest font-black opacity-60">JPG or PNG preferred</p>
                   </>
                 )}
+
+                {(currentOriginalImage || currentProcessedImage) && !isAnalyzing && (
+                  <button onClick={clearUpload} className="absolute top-4 right-4 h-10 w-10 bg-background/80 backdrop-blur shadow-md rounded-full flex items-center justify-center hover:bg-destructive hover:text-white transition-colors z-20">
+                    <XCircle className="h-6 w-6" />
+                  </button>
+                )}
               </div>
 
               {isAnalyzing && <LoadingOverlay />}
               <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
 
-              {!currentResults && (
+              {!currentResults ? (
                 <div className="mt-6 space-y-4">
                   {!currentOriginalImage ? (
                     <Button disabled={isAnalyzing} className="w-full h-16 rounded-xl text-lg font-black" onClick={() => fileInputRef.current?.click()}>
@@ -623,6 +563,23 @@ export function DentalVisionClient() {
                       START CLINICAL ANALYSIS
                     </Button>
                   )}
+                </div>
+              ) : (
+                <div className="mt-8 space-y-6 animate-in slide-in-from-bottom-4">
+                  <div className="flex items-center gap-3 border-b pb-4">
+                    <Bot className="h-6 w-6 text-primary" />
+                    <h3 className="text-lg font-black uppercase tracking-tight">Clinical Findings</h3>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {currentResults.map((r, i) => (
+                      <Badge key={i} variant="secondary" className="px-4 py-2 text-[10px] font-black uppercase border-primary/20 bg-primary/5">
+                        <span className="text-primary mr-1">{r.disease}:</span> {r.tooth_numbers.join(', ')}
+                      </Badge>
+                    ))}
+                  </div>
+                  <Button variant="outline" className="w-full h-14 rounded-xl font-black uppercase text-xs" onClick={clearUpload}>
+                    <RefreshCcw className="mr-2 h-4 w-4" /> Start New Analysis
+                  </Button>
                 </div>
               )}
             </CardContent>
@@ -674,7 +631,6 @@ export function DentalVisionClient() {
                 )}
 
                 {flash && <div className="absolute inset-0 bg-white z-[60] animate-out fade-out duration-300" />}
-
                 {(isAnalyzing || isProcessingLive) && (
                   <LoadingOverlay label={isProcessingLive ? 'Isolating OPG...' : 'Analyzing Radiograph'} />
                 )}
@@ -714,7 +670,7 @@ export function DentalVisionClient() {
                       size="lg"
                       className="w-full h-20 text-lg font-black rounded-2xl shadow-2xl bg-primary"
                     >
-                      {isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle2 className="mr-3 h-6 w-6" />}
+                      {isAnalyzing ? <Loader2 className="animate-spin mr-2" /> : <Bot className="mr-3 h-6 w-6" />}
                       CONFIRM & ANALYZE
                     </Button>
                     <div className="flex gap-2">
@@ -729,20 +685,22 @@ export function DentalVisionClient() {
                 )}
 
                 {showLiveResults && (
-                  <div className="space-y-4 animate-in slide-in-from-bottom-4 duration-500">
-                    <div className="flex items-center justify-between gap-3 px-1">
-                      <div className="flex flex-col">
-                        <h4 className="text-xs font-black uppercase text-primary">Scanner Analysis Complete</h4>
-                        <p className="text-[10px] text-muted-foreground uppercase font-bold">{currentResults?.length || 0} Clinical Findings</p>
+                  <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+                    <div className="flex flex-col gap-1 px-1">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-black uppercase text-primary">Analysis Complete</h4>
+                        <Badge variant="outline" className="text-[9px] font-black">{currentResults?.length || 0} Findings</Badge>
                       </div>
-                      <Button variant="outline" size="sm" onClick={initCamera} className="rounded-full h-10 px-4 font-black text-[10px] uppercase">
-                        <RefreshCcw className="mr-2 h-3 w-3" /> NEW SCAN
-                      </Button>
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {currentResults?.map((r, i) => (
+                          <Badge key={i} variant="secondary" className="px-3 py-1 text-[9px] font-black uppercase bg-primary/5">
+                            {r.disease}: {r.tooth_numbers.join(', ')}
+                          </Badge>
+                        ))}
+                      </div>
                     </div>
-                    <Button onClick={() => setActiveTab('consult')} size="lg" className="w-full h-20 text-lg font-black rounded-2xl shadow-2xl bg-primary">
-                      <Sparkles className="mr-3 h-6 w-6" />
-                      START AI TUTORING DEEP-DIVE
-                      <ArrowRight className="ml-2 h-5 w-5" />
+                    <Button onClick={initCamera} size="lg" className="w-full h-16 text-sm font-black rounded-2xl shadow-xl">
+                      <RefreshCcw className="mr-3 h-5 w-5" /> START NEW SCAN
                     </Button>
                   </div>
                 )}
@@ -752,143 +710,10 @@ export function DentalVisionClient() {
             </CardContent>
           </Card>
         </TabsContent>
-
-        <TabsContent value="consult">
-          <div className="grid md:grid-cols-12 gap-4 items-start">
-            <div className="md:col-span-7 space-y-4">
-              <Card className="overflow-hidden border-primary/20 shadow-xl rounded-2xl">
-                <CardContent className="p-0">
-                  <div className="bg-primary/5 p-3 border-b flex items-center justify-between">
-                    <h3 className="text-[10px] font-black uppercase text-primary tracking-widest flex items-center gap-2">
-                      <Eye className="h-4 w-4" /> Clinical Review
-                    </h3>
-                    {hotspots && <Badge variant="outline" className="text-[9px] font-black">TAP FINDINGS</Badge>}
-                  </div>
-                  <div className="relative aspect-video bg-black">
-                    {currentProcessedImage && (
-                      <>
-                        <Image src={currentProcessedImage} alt="Analyzed Radiograph" fill className="object-contain" />
-                        {hotspots && (
-                          <svg className="absolute inset-0 w-full h-full pointer-events-auto" viewBox="0 0 1 1" preserveAspectRatio="none">
-                            {hotspots.map((h, i) => (
-                              <rect
-                                key={i}
-                                x={h.box[0]} y={h.box[1]}
-                                width={h.box[2] - h.box[0]} height={h.box[3] - h.box[1]}
-                                className={cn(
-                                  'fill-primary/0 stroke-2 cursor-pointer transition-all',
-                                  selectedFindingIndex === i ? 'stroke-yellow-400 fill-yellow-400/30' : 'stroke-transparent hover:stroke-white/60'
-                                )}
-                                onClick={() => setSelectedFindingIndex(i)}
-                              />
-                            ))}
-                          </svg>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {currentResults && (
-                <div className="flex flex-wrap gap-2">
-                  {currentResults.map((r, i) => (
-                    <Badge
-                      key={i}
-                      onClick={() => setSelectedFindingIndex(i)}
-                      variant={selectedFindingIndex === i ? 'default' : 'secondary'}
-                      className={cn('px-4 py-2 text-[10px] font-black cursor-pointer shadow-md', selectedFindingIndex === i && 'border-2 border-yellow-400')}
-                    >
-                      {r.disease.toUpperCase()} ({r.tooth_numbers.join(', ')})
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="md:col-span-5 space-y-4">
-              <Card className="bg-primary/5 border-primary/20 shadow-2xl rounded-2xl min-h-[400px]">
-                <CardContent className="p-5">
-                  <div className="flex items-center gap-3 mb-6 border-b border-primary/10 pb-4">
-                    <div className="h-10 w-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
-                      <Sparkles className="h-6 w-6" />
-                    </div>
-                    <h2 className="text-lg font-black uppercase">AI Tutor</h2>
-                  </div>
-
-                  {isAiRateLimited && (
-                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl mb-6 flex gap-3 items-start">
-                      <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-xs font-bold text-amber-900">AI is Busy</p>
-                        <p className="text-[10px] text-amber-800 leading-tight">Gemini has reached its hourly quota. Clinical tutoring will resume shortly.</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {!clinicalInsights && !isAiRateLimited ? (
-                    <div className="space-y-4">
-                      <Skeleton className="h-24 w-full rounded-xl" />
-                      <Skeleton className="h-40 w-full rounded-xl" />
-                    </div>
-                  ) : clinicalInsights ? (
-                    <div className="space-y-6">
-                      <section className="bg-white p-5 rounded-2xl border border-primary/10 min-h-[180px]">
-                        <h4 className="text-[10px] font-black uppercase text-primary/60 tracking-widest mb-4">
-                          {selectedFindingIndex !== null ? 'Finding Insight' : 'Select a Finding'}
-                        </h4>
-                        {selectedFindingIndex !== null && selectedExplanation ? (
-                          <div className="animate-in fade-in duration-300">
-                            <h5 className="font-black text-sm mb-2 text-foreground flex items-center justify-between">
-                              {selectedExplanation.condition.toUpperCase()}
-                              <ChevronRight className="h-4 w-4 text-primary/40" />
-                            </h5>
-                            <p className="text-[12px] leading-relaxed text-foreground/70 mb-5">{selectedExplanation.significance}</p>
-                            <div className="bg-primary/5 p-4 rounded-xl border border-primary/10">
-                              <p className="text-[10px] font-black text-primary mb-2">MANAGEMENT</p>
-                              <p className="text-[12px] italic text-primary/80">{selectedExplanation.considerations}</p>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center justify-center text-center pt-8 opacity-20">
-                            <Bot className="h-12 w-12 mb-3" />
-                            <p className="text-[11px] font-black text-center">TAP A FINDING FOR CLINICAL INSIGHTS.</p>
-                          </div>
-                        )}
-                      </section>
-
-                      <section className="px-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <BookOpen className="h-4 w-4 text-primary/60" />
-                          <h4 className="text-[9px] font-black uppercase text-primary/60">Overview</h4>
-                        </div>
-                        <p className="text-[11px] leading-relaxed text-foreground/60">{clinicalInsights.clinicalOverview}</p>
-                      </section>
-
-                      <div className="bg-primary text-primary-foreground p-5 rounded-2xl">
-                        <div className="flex items-center gap-2 mb-3">
-                          <GraduationCap className="h-5 w-5" />
-                          <h4 className="text-[10px] font-black uppercase">Learning Tip</h4>
-                        </div>
-                        <p className="text-[12px] font-bold">{clinicalInsights.studentTakeaway}</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center text-center py-20 opacity-40">
-                      <HelpCircle className="h-12 w-12 mb-4" />
-                      <p className="text-sm font-bold uppercase">Tutoring Unavailable</p>
-                      <p className="text-[10px]">AI resources are currently exhausted. Please try again in 1 minute.</p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        </TabsContent>
       </Tabs>
 
       <footer className="text-center py-10 opacity-20">
-        <p className="text-[10px] uppercase font-black tracking-widest">DentalVision AR Systems</p>
+        <p className="text-[10px] uppercase font-black tracking-widest">DentalVision Clinical Systems</p>
       </footer>
     </div>
   );
