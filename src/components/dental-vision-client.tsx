@@ -364,6 +364,15 @@ export function DentalVisionClient() {
     return () => stopLive();
   }, []);
 
+  // Re-attach stream whenever the video element is mounted and visible
+  useEffect(() => {
+    if (isLiveActive && !isVerifyingScan && !showLiveResults && streamRef.current && videoRef.current) {
+      if (videoRef.current.srcObject !== streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+      }
+    }
+  }, [isLiveActive, isVerifyingScan, showLiveResults]);
+
   const compressImage = (dataUri: string, maxDim = 1200): Promise<string> =>
     new Promise(resolve => {
       const img = new window.Image();
@@ -381,16 +390,19 @@ export function DentalVisionClient() {
 
   const initCamera = async () => {
     try {
+      // Clear previous stream if any
+      stopLive();
+      
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 1920 } }
       });
       streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
+      
       setIsLiveActive(true);
       setShowLiveResults(false);
       setIsVerifyingScan(false);
       setCurrentProcessedImage(null);
-      setImgNaturalSize({ w: 0, h: 0 }); // reset so container goes back to camera ratio
+      setImgNaturalSize({ w: 0, h: 0 }); 
     } catch {
       toast({ variant: 'destructive', title: 'Camera Access Denied', description: 'Please allow camera access to use Live View Shoot.' });
     }
@@ -448,7 +460,6 @@ export function DentalVisionClient() {
     }
   };
 
-  // ── Capture: draw frame to canvas, auto-detect quad, show verify stage ──────
   const handleCapture = async () => {
     if (!videoRef.current || !canvasRef.current) return;
     setFlash(true);
@@ -457,21 +468,18 @@ export function DentalVisionClient() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
-    // Capture BEFORE stopping the stream
     canvas.width  = video.videoWidth  || 1280;
     canvas.height = video.videoHeight || 720;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.drawImage(video, 0, 0);
 
-    // Stop camera AFTER we've drawn the frame
     stopLive();
 
     const rawUri = canvas.toDataURL('image/jpeg', 0.95);
     setCurrentOriginalImage(rawUri);
     setImgNaturalSize({ w: canvas.width, h: canvas.height });
 
-    // Auto-detect while canvas still has valid pixel data
     const detected = autoDetectOPG(canvas);
     setQuad(detected);
 
@@ -479,12 +487,10 @@ export function DentalVisionClient() {
     setIsVerifyingScan(true);
   };
 
-  // ── Confirm: reload capture → perspective-warp quad → send to API ────────
   const startAnalysisFromVerified = () => {
     if (!currentOriginalImage || !canvasRef.current) return;
 
     startAnalysisTransition(async () => {
-      // Re-draw the captured image back onto canvas (in case canvas was cleared)
       await new Promise<void>(resolve => {
         const img = new window.Image();
         img.onload = () => {
@@ -503,7 +509,6 @@ export function DentalVisionClient() {
     });
   };
 
-  // ── Reset quad to full frame ─────────────────────────────────────────────
   const useFullFrameInstead = () => {
     setQuad([{ x:0,y:0 },{ x:1,y:0 },{ x:1,y:1 },{ x:0,y:1 }]);
     toast({ title: 'Full frame selected', description: 'Adjust handles if needed, then confirm.' });
@@ -584,7 +589,6 @@ export function DentalVisionClient() {
           </TabsTrigger>
         </TabsList>
 
-        {/* ── UPLOAD TAB ── */}
         <TabsContent value="upload">
           <Card className="border-primary/10 shadow-xl rounded-2xl overflow-hidden relative">
             <CardContent className="p-4 sm:p-8">
@@ -636,30 +640,21 @@ export function DentalVisionClient() {
           </Card>
         </TabsContent>
 
-        {/* ── LIVE AR TAB ── */}
         <TabsContent value="live">
           <Card className="border-primary/10 shadow-2xl overflow-hidden rounded-2xl">
             <CardContent className="p-0 relative">
-
-              {/* ── Viewfinder area — height adapts to portrait or landscape capture ── */}
               <div
                 className="relative bg-black flex items-center justify-center overflow-hidden"
                 style={{
-                  // During verify: match captured image orientation naturally
-                  // Portrait capture → taller box; Landscape → wider box
-                  // Clamp between 56vw (landscape min) and 90vw (portrait max)
                   height: isVerifyingScan && imgNaturalSize.w > 0
                     ? `clamp(56vw, ${Math.round((imgNaturalSize.h / imgNaturalSize.w) * 100)}vw, 90vw)`
-                    : '56vw', // default 16:9-ish for live camera
+                    : '56vw',
                   maxHeight: '75vh',
                 }}
               >
-
-                {/* Live camera preview */}
                 {!isVerifyingScan && !showLiveResults && (
                   <>
                     <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
-                    {/* Corner guide brackets */}
                     <div className="absolute inset-0 border-[20px] sm:border-[40px] border-black/50 pointer-events-none">
                       <div className="w-full h-full border-2 border-primary/20 rounded-lg relative overflow-hidden">
                         <div className="absolute inset-0 flex flex-col items-center justify-center opacity-20">
@@ -671,7 +666,6 @@ export function DentalVisionClient() {
                   </>
                 )}
 
-                {/* ── Verify stage: quad handles ── */}
                 {isVerifyingScan && currentOriginalImage && (
                   <VerifyStage
                     imageUri={currentOriginalImage}
@@ -682,7 +676,6 @@ export function DentalVisionClient() {
                   />
                 )}
 
-                {/* Results preview */}
                 {showLiveResults && currentProcessedImage && (
                   <div className="relative w-full h-full bg-black flex items-center justify-center animate-in zoom-in-95 duration-500">
                     <div className="relative w-full aspect-video">
@@ -691,15 +684,12 @@ export function DentalVisionClient() {
                   </div>
                 )}
 
-                {/* Flash */}
                 {flash && <div className="absolute inset-0 bg-white z-[60] animate-out fade-out duration-300" />}
 
-                {/* Loading overlays */}
                 {(isAnalyzing || isProcessingLive) && (
                   <LoadingOverlay label={isProcessingLive ? 'Isolating OPG...' : 'Analyzing Radiograph'} />
                 )}
 
-                {/* Start camera prompt */}
                 {!isLiveActive && !isVerifyingScan && !showLiveResults && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md">
                     <Button onClick={initCamera} size="lg" className="h-16 px-10 rounded-full font-black">
@@ -709,7 +699,6 @@ export function DentalVisionClient() {
                 )}
               </div>
 
-              {/* ── Action buttons ── */}
               <div className="p-4 bg-background border-t">
                 {isLiveActive && !isVerifyingScan && (
                   <>
@@ -775,7 +764,6 @@ export function DentalVisionClient() {
           </Card>
         </TabsContent>
 
-        {/* ── AI CONSULT TAB ── */}
         <TabsContent value="consult">
           <div className="grid md:grid-cols-12 gap-4 items-start">
             <div className="md:col-span-7 space-y-4">
